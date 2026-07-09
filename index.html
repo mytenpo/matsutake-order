@@ -59,6 +59,10 @@ body{background:#07070f;min-height:100vh;font-family:'Hiragino Sans','Noto Sans 
 .ci-name{font-size:30px;font-weight:600}
 .ci-price{font-size:24px;color:#888;margin-top:2px}
 .ci-total{font-size:33px;font-weight:700;color:#ff2d78;min-width:80px;text-align:right}
+.ci-ctrl{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.ci-qty-btn{width:32px;height:32px;border-radius:8px;border:1px solid rgba(255,45,120,.3);background:rgba(255,45,120,.08);color:#ff2d78;font-size:20px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+.ci-qty-num{min-width:24px;text-align:center;font-size:20px;font-weight:700}
+.ci-del-btn{width:36px;height:36px;border-radius:8px;border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);font-size:18px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:0}
 .total-row{display:flex;justify-content:space-between;align-items:center;padding:14px 0 10px;border-top:1px solid rgba(255,255,255,.08)}
 .total-label{font-size:30px;color:#888}
 .total-amt{font-size:48px;font-weight:800;color:#ff2d78}
@@ -502,7 +506,10 @@ function openCart(){
     var thumbHTML = FOOD_IMGS[x.id]
       ? '<img src="data:image/jpeg;base64,'+FOOD_IMGS[x.id]+'" style="width:52px;height:52px;object-fit:contain;border-radius:8px;flex-shrink:0;">'
       : '<div class="ci-emoji">'+x.emoji+'</div>';
-    return '<div class="cart-item-row">'+thumbHTML+'<div class="ci-info"><div class="ci-name">'+x.name+'</div><div class="ci-price">¥'+x.dispPrice.toLocaleString()+' × '+x.qty+'</div></div><div class="ci-total">¥'+(x.dispPrice*x.qty).toLocaleString()+'</div></div>';
+    return '<div class="cart-item-row">'+thumbHTML+'<div class="ci-info"><div class="ci-name">'+x.name+'</div><div class="ci-price">¥'+x.dispPrice.toLocaleString()+' × '+x.qty+'</div></div>'
+      +'<div class="ci-ctrl"><button class="ci-qty-btn" onclick="chgCart(\''+x.id+'\',-1)">&#8722;</button><div class="ci-qty-num">'+x.qty+'</div><button class="ci-qty-btn" onclick="chgCart(\''+x.id+'\',1)">&#43;</button></div>'
+      +'<div class="ci-total">¥'+(x.dispPrice*x.qty).toLocaleString()+'</div>'
+      +'<button class="ci-del-btn" onclick="removeCartItem(\''+x.id+'\')" aria-label="削除">🗑</button></div>';
   }).join("");
   document.getElementById("cart-subtotal").textContent = "¥"+subtotal.toLocaleString();
   document.getElementById("cart-tax").textContent = "¥"+tax.toLocaleString();
@@ -515,6 +522,25 @@ function openCart(){
 function closeCart(){
   document.getElementById("overlay").className="overlay";
   document.getElementById("cart-sheet").className="cart-sheet";
+}
+
+function chgCart(id, d){
+  cart[id] = Math.max(0, (cart[id]||0) + d);
+  if(cart[id]===0){
+    delete cart[id];
+    if(shochuStyles[id]) delete shochuStyles[id];
+  }
+  updateCartUI();
+  renderDrink(); renderFood();
+  if(Object.keys(cart).length>0) openCart(); else closeCart();
+}
+
+function removeCartItem(id){
+  delete cart[id];
+  if(shochuStyles[id]) delete shochuStyles[id];
+  updateCartUI();
+  renderDrink(); renderFood();
+  if(Object.keys(cart).length>0) openCart(); else closeCart();
 }
 
 function submitOrder(){
