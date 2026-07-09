@@ -529,11 +529,8 @@ function submitOrder(){
   var subtotal = items.reduce(function(s,x){return s+x.price*x.qty;}, 0);
   var tax = Math.floor(subtotal * 0.1);
   var total = subtotal + tax;
-  fetch(GAS_WEBAPP_URL, {
-    method: "POST",
-    headers: { "Content-Type": "text/plain;charset=utf-8" }, // preflightを避けるためtext/plainで送信
-    body: JSON.stringify({ action: "submitOrder", data: {tableNo:TABLE_NO, items:items, subtotal:subtotal, tax:tax, total:total} })
-  })
+  var payload = {tableNo:TABLE_NO, items:items, subtotal:subtotal, tax:tax, total:total};
+  fetch(GAS_WEBAPP_URL + "?action=submitOrder&data=" + encodeURIComponent(JSON.stringify(payload)))
     .then(function(r){ return r.json(); })
     .then(function(res){
       if(res&&res.success){
