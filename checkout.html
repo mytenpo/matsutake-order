@@ -35,9 +35,10 @@ body{background:#07070f;min-height:100vh;font-family:'Hiragino Sans','Noto Sans 
 <body>
 <div class="hdr">
   <div class="hdr-logo">MATUTAKE 会計伝票</div>
-  <div class="hdr-sub">スタッフ用 / mPOPレシート印刷対応</div>
+  <div class="hdr-sub">スタッフ用 / mPOPレシート印刷対応 <b style="color:#ff9ec2">v3.2</b></div>
 </div>
 <div class="wrap">
+  <button class="reload-btn" style="margin:0 0 12px" onclick="printTest()">🧪 テスト印刷（3行のみ・切り分け用）</button>
   <div class="sec-title">テーブルを選択</div>
   <div class="table-grid" id="table-grid"></div>
 
@@ -145,6 +146,19 @@ function renderBill(){
   document.getElementById("s-kara").textContent = "¥"+b.karaCharge.toLocaleString();
   document.getElementById("s-kara-note").textContent = b.karaLabel;
   document.getElementById("s-grand").textContent = "¥"+b.grand.toLocaleString();
+}
+
+// ── 切り分け用：最小構成のテスト印刷 ─────────────────
+function printTest(){
+  var html = '<html><head><meta charset="utf-8"></head>'
+    + '<body style="width:384px;margin:0;padding:0;font-size:24px;color:#000;font-family:sans-serif">'
+    + '<div style="text-align:center;font-weight:bold">テスト印刷</div>'
+    + '<div style="text-align:center">MATSUTAKE</div>'
+    + '<div style="text-align:center">1 2 3</div>'
+    + '</body></html>';
+  var back = encodeURIComponent(location.href.split("#")[0]);
+  location.href = "starpassprnt://v1/print/nopreview?back=" + back
+    + "&size=2&html=" + encodeURIComponent(html);
 }
 
 // ── レシート印刷（Star PassPRNT / mPOP 58mm） ─────────
