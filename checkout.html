@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>💴 MATUTAKE 会計</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#07070f;min-height:100vh;font-family:'Hiragino Sans','Noto Sans JP',sans-serif;color:#e8e8f5;padding-bottom:40px}
+.hdr{background:rgba(7,7,15,.97);border-bottom:1px solid rgba(255,45,120,.2);padding:14px 16px;text-align:center;position:sticky;top:0;z-index:100}
+.hdr-logo{font-size:26px;font-weight:900;letter-spacing:2px;background:linear-gradient(135deg,#ff6ba0,#ff2d78);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hdr-sub{font-size:13px;color:#666;margin-top:2px}
+.wrap{max-width:520px;margin:0 auto;padding:16px}
+.sec-title{font-size:15px;color:#888;margin:14px 0 8px;font-weight:600}
+.table-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tbl-btn{padding:16px 0;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);color:#e8e8f5;font-size:18px;font-weight:700;cursor:pointer;font-family:inherit}
+.tbl-btn.active{border-color:#ff2d78;background:rgba(255,45,120,.12);color:#ff2d78}
+.bill{background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px;margin-top:16px;display:none}
+.bill.show{display:block}
+.bill-table{font-size:20px;font-weight:800;color:#00d4ff;text-align:center;margin-bottom:10px}
+.bill-row{display:flex;justify-content:space-between;font-size:15px;padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.07)}
+.bill-row .nm{flex:1}
+.bill-row .qt{width:50px;text-align:center;color:#888}
+.bill-row .am{width:80px;text-align:right}
+.bill-row.cancelled{opacity:.4;text-decoration:line-through}
+.sum-row{display:flex;justify-content:space-between;font-size:15px;padding:6px 0;color:#aaa}
+.sum-row.grand{font-size:22px;font-weight:800;color:#ff2d78;border-top:1px solid rgba(255,255,255,.15);margin-top:6px;padding-top:10px}
+.kara-note{font-size:12px;color:#666;text-align:right}
+.print-btn{width:100%;padding:16px;border-radius:12px;border:none;background:linear-gradient(135deg,#ff2d78,#ff6b35);color:#fff;font-size:19px;font-weight:800;cursor:pointer;font-family:inherit;margin-top:14px}
+.reload-btn{width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#888;font-size:14px;cursor:pointer;font-family:inherit;margin-top:8px}
+.empty{color:#555;text-align:center;padding:24px 0;font-size:15px}
+.err{color:#ff6b6b;text-align:center;padding:12px 0;font-size:14px}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="hdr-logo">MATUTAKE 会計伝票</div>
+  <div class="hdr-sub">スタッフ用 / mPOPレシート印刷対応</div>
+</div>
+<div class="wrap">
+  <div class="sec-title">テーブルを選択</div>
+  <div class="table-grid" id="table-grid"></div>
+
+  <div class="bill" id="bill">
+    <div class="bill-table" id="bill-table"></div>
+    <div id="bill-items"></div>
+    <div style="margin-top:10px">
+      <div class="sum-row"><span>小計（税込・注文分）</span><span id="s-order">¥0</span></div>
+      <div class="sum-row"><span>🎤 カラオケチャージ</span><span id="s-kara">¥0</span></div>
+      <div class="kara-note" id="s-kara-note"></div>
+      <div class="sum-row grand"><span>現在金額</span><span id="s-grand">¥0</span></div>
+    </div>
+    <button class="print-btn" onclick="printReceipt()">🖨 レシート印刷（mPOP）</button>
+    <button class="reload-btn" onclick="loadBill()">🔄 再読み込み</button>
+  </div>
+  <div class="empty" id="msg">テーブルを選択してください</div>
+</div>
+
+<script>
+// ── 設定 ─────────────────────────────────────────────
+// Index側と同じGASウェブアプリURL
+var GAS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbzHkfQ0hms6isOHg09y83rUktyjjO7vMCWuGv0yeeSZrZkkDhL8bKLJEGu87zJyv1h6tw/exec";
+
+// ※ 実際のQRコードの table パラメータに合わせて編集してください
+var TABLES = ["1","2","3","4","5","6"];
+
+var STORE_NAME = "カラオケ♪酒場 マツタケ";
+
+// カラオケチャージ（Index_60と同一ロジック：1人あたり×人数）
+var KARA_BASE = 1500, KARA_ADD = 500, KARA_BLOCK_MS = 2*60*60*1000;
+
+// ── 状態 ─────────────────────────────────────────────
+var currentTable = null;
+var billData = null;   // {orders:[], orderTotal, karaCharge, karaLabel, grand}
+
+// ── テーブル選択 ─────────────────────────────────────
+document.getElementById("table-grid").innerHTML = TABLES.map(function(t){
+  return '<button class="tbl-btn" id="tbl-'+t+'" onclick="selectTable(\''+t+'\')">'+t+'</button>';
+}).join("");
+
+function selectTable(t){
+  currentTable = t;
+  TABLES.forEach(function(x){
+    document.getElementById("tbl-"+x).className = "tbl-btn"+(x===t?" active":"");
+  });
+  loadBill();
+}
+
+// ── 伝票読み込み ─────────────────────────────────────
+function loadBill(){
+  if(!currentTable) return;
+  document.getElementById("msg").textContent = "読み込み中...";
+  document.getElementById("msg").style.display = "block";
+  document.getElementById("bill").className = "bill";
+
+  Promise.all([
+    fetch(GAS_WEBAPP_URL+"?action=getOrders&table="+encodeURIComponent(currentTable)).then(function(r){return r.json();}),
+    fetch(GAS_WEBAPP_URL+"?action=getKaraokeInfo&table="+encodeURIComponent(currentTable)).then(function(r){return r.json();})
+  ]).then(function(res){
+    var ord = res[0], kara = res[1];
+    if(!ord || !ord.success){ showErr("注文の取得に失敗しました"); return; }
+    var orders = ord.orders || [];
+    var orderTotal = orders.reduce(function(s,o){
+      return s + (o.status==="キャンセル" ? 0 : (Number(o.amount)||0));
+    }, 0);
+
+    var karaCharge = 0, karaLabel = "利用記録なし", karaGuests = null;
+    if(kara && kara.success && kara.startTime){
+      karaGuests = Number(kara.guests) || 1;   // 未入力時は1名として計算
+      var elapsed = Math.max(0, Date.now() - Number(kara.startTime));
+      var blocks = Math.floor(elapsed / KARA_BLOCK_MS) + 1;
+      var perPerson = KARA_BASE + (blocks-1)*KARA_ADD;
+      karaCharge = perPerson * karaGuests;
+      var h = Math.floor(elapsed/3600000), m = Math.floor((elapsed%3600000)/60000);
+      karaLabel = karaGuests + "名様 × ¥" + perPerson.toLocaleString()
+                + "（ご利用 "+h+"時間"+m+"分）"
+                + (kara.guests ? "" : " ※人数未入力");
+    }
+
+    billData = {orders:orders, orderTotal:orderTotal, karaCharge:karaCharge, karaLabel:karaLabel, karaGuests:karaGuests, grand:orderTotal+karaCharge};
+    renderBill();
+  }).catch(function(){ showErr("通信エラーが発生しました"); });
+}
+
+function showErr(t){
+  document.getElementById("msg").textContent = t;
+  document.getElementById("msg").className = "err";
+}
+
+function renderBill(){
+  var b = billData;
+  document.getElementById("msg").style.display = "none";
+  document.getElementById("bill").className = "bill show";
+  document.getElementById("bill-table").textContent = "テーブル "+currentTable;
+
+  if(b.orders.length===0){
+    document.getElementById("bill-items").innerHTML = '<div class="empty">注文はありません</div>';
+  } else {
+    document.getElementById("bill-items").innerHTML = b.orders.map(function(o){
+      var c = o.status==="キャンセル";
+      return '<div class="bill-row'+(c?' cancelled':'')+'"><span class="nm">'+o.name+'</span><span class="qt">×'+o.qty+'</span><span class="am">¥'+Number(o.amount).toLocaleString()+'</span></div>';
+    }).join("");
+  }
+  document.getElementById("s-order").textContent = "¥"+b.orderTotal.toLocaleString();
+  document.getElementById("s-kara").textContent = "¥"+b.karaCharge.toLocaleString();
+  document.getElementById("s-kara-note").textContent = b.karaLabel;
+  document.getElementById("s-grand").textContent = "¥"+b.grand.toLocaleString();
+}
+
+// ── レシート印刷（Star PassPRNT / mPOP 58mm） ─────────
+function printReceipt(){
+  if(!billData){ alert("先にテーブルを選択してください"); return; }
+  var b = billData;
+  var now = new Date();
+  var dt = now.getFullYear()+"/"+(now.getMonth()+1)+"/"+now.getDate()+" "
+         + ("0"+now.getHours()).slice(-2)+":"+("0"+now.getMinutes()).slice(-2);
+
+  var rows = b.orders.filter(function(o){ return o.status!=="キャンセル"; }).map(function(o){
+    return '<tr><td>'+esc(o.name)+'</td><td class="c">×'+o.qty+'</td><td class="r">¥'+Number(o.amount).toLocaleString()+'</td></tr>';
+  }).join("");
+
+  var html =
+    '<html><head><meta charset="utf-8"><style>'
+    +'body{font-family:sans-serif;width:100%;margin:0;padding:0;font-size:12px;color:#000}'
+    +'.center{text-align:center}.big{font-size:16px;font-weight:bold}'
+    +'table{width:100%;border-collapse:collapse}td{padding:2px 0;vertical-align:top}'
+    +'.c{text-align:center;width:34px}.r{text-align:right;width:64px}'
+    +'.line{border-top:1px dashed #000;margin:6px 0}'
+    +'.grand{font-size:16px;font-weight:bold}'
+    +'</style></head><body>'
+    +'<div class="center big">'+esc(STORE_NAME)+'</div>'
+    +'<div class="center">御会計伝票</div>'
+    +'<div class="line"></div>'
+    +'<div>テーブル: '+esc(currentTable)+(b.karaGuests ? '　'+b.karaGuests+'名様' : '')+'</div>'
+    +'<div>'+dt+'</div>'
+    +'<div class="line"></div>'
+    +'<table>'+rows+'</table>'
+    +'<div class="line"></div>'
+    +'<table>'
+    +'<tr><td>ご注文合計（税込）</td><td class="r">¥'+b.orderTotal.toLocaleString()+'</td></tr>'
+    +'<tr><td>カラオケチャージ<br><span style="font-size:10px">'+esc(b.karaLabel)+'</span></td><td class="r">¥'+b.karaCharge.toLocaleString()+'</td></tr>'
+    +'<tr><td class="grand">現在金額</td><td class="r grand">¥'+b.grand.toLocaleString()+'</td></tr>'
+    +'</table>'
+    +'<div class="line"></div>'
+    +'<div class="center">ご来店ありがとうございました🎤</div>'
+    +'</body></html>';
+
+  // PassPRNT URLスキーム（iOS）: size=2 → 58mm幅
+  var back = encodeURIComponent(location.href.split("#")[0]);
+  var url = "starpassprnt://v1/print/nopreview?"
+          + "back=" + back
+          + "&size=2"
+          + "&html=" + encodeURIComponent(html);
+  location.href = url;
+}
+
+function esc(s){
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+</script>
+</body>
+</html>
