@@ -165,6 +165,25 @@ body{background:#07070f;min-height:100vh;font-family:'Hiragino Sans','Noto Sans 
 </div>
 
 
+<!-- 人数入力モーダル（Index_60で追加） -->
+<div id="guests-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:600;">
+  <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:88%;max-width:340px;background:#0d0d1c;border:1px solid rgba(255,45,120,.35);border-radius:20px;padding:24px 20px;text-align:center;">
+    <div style="font-size:22px;font-weight:bold;color:#fff;margin-bottom:6px;">ようこそ🎤</div>
+    <div style="font-size:17px;color:#ccc;margin-bottom:18px;">何名様でご来店ですか？</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+      <button class="guests-btn" onclick="selectGuests(1)" style="padding:14px 0;font-size:18px;font-weight:bold;border-radius:12px;border:1px solid rgba(255,45,120,.4);background:#1a1a2e;color:#fff;">1名</button>
+      <button class="guests-btn" onclick="selectGuests(2)" style="padding:14px 0;font-size:18px;font-weight:bold;border-radius:12px;border:1px solid rgba(255,45,120,.4);background:#1a1a2e;color:#fff;">2名</button>
+      <button class="guests-btn" onclick="selectGuests(3)" style="padding:14px 0;font-size:18px;font-weight:bold;border-radius:12px;border:1px solid rgba(255,45,120,.4);background:#1a1a2e;color:#fff;">3名</button>
+      <button class="guests-btn" onclick="selectGuests(4)" style="padding:14px 0;font-size:18px;font-weight:bold;border-radius:12px;border:1px solid rgba(255,45,120,.4);background:#1a1a2e;color:#fff;">4名</button>
+      <button class="guests-btn" onclick="selectGuests(5)" style="padding:14px 0;font-size:18px;font-weight:bold;border-radius:12px;border:1px solid rgba(255,45,120,.4);background:#1a1a2e;color:#fff;">5名</button>
+      <button class="guests-btn" onclick="selectGuests(6)" style="padding:14px 0;font-size:18px;font-weight:bold;border-radius:12px;border:1px solid rgba(255,45,120,.4);background:#1a1a2e;color:#fff;">6名</button>
+      <button class="guests-btn" onclick="selectGuests(7)" style="padding:14px 0;font-size:18px;font-weight:bold;border-radius:12px;border:1px solid rgba(255,45,120,.4);background:#1a1a2e;color:#fff;">7名</button>
+      <button class="guests-btn" onclick="selectGuests(8)" style="padding:14px 0;font-size:18px;font-weight:bold;border-radius:12px;border:1px solid rgba(255,45,120,.4);background:#1a1a2e;color:#fff;">8名</button>
+    </div>
+    <div style="font-size:12px;color:#888;margin-top:14px;">※カラオケチャージはお一人様 ¥1,500（最初の2時間）です</div>
+  </div>
+</div>
+
 <!-- スタイルポップアップ -->
 <div id="style-overlay" onclick="closeStylePopup()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:500;">
   <div id="style-sheet" onclick="event.stopPropagation()" style="position:fixed;bottom:0;left:0;right:0;background:#0d0d1c;border-radius:20px 20px 0 0;border:1px solid rgba(255,45,120,.2);padding:20px;max-height:75vh;overflow-y:auto;transform:translateY(100%);transition:transform .35s cubic-bezier(.4,0,.2,1);">
@@ -341,7 +360,8 @@ var FOOD_SUBS = {
 var KARA_BASE = 1500;
 var KARA_ADD = 500;
 var KARA_BLOCK_MS = 2 * 60 * 60 * 1000;
-var karaStart = null;        // 開始時刻(ms) GASから取得（当日最初の注文時刻）
+var karaStart = null;        // 開始時刻(ms) GASから取得（QRでページを開いた時刻）
+var karaGuests = null;       // 人数（Index_60で追加。1人あたりチャージ×人数で計算）
 var lastOrderTotal = 0;      // 履歴の注文合計（キャンセル除く）
 
 function calcKaraCharge(){
@@ -349,10 +369,13 @@ function calcKaraCharge(){
   var elapsed = Date.now() - karaStart;
   if(elapsed < 0) elapsed = 0;
   var blocks = Math.floor(elapsed / KARA_BLOCK_MS) + 1;  // 入店時点で1ブロック目
-  var charge = KARA_BASE + (blocks - 1) * KARA_ADD;
+  var perPerson = KARA_BASE + (blocks - 1) * KARA_ADD;
+  var guests = karaGuests || 1;
+  var charge = perPerson * guests;
   var h = Math.floor(elapsed / 3600000);
   var m = Math.floor((elapsed % 3600000) / 60000);
-  return {charge: charge, blocks: blocks, label: "ご利用 " + h + "時間" + m + "分"};
+  var guestLabel = karaGuests ? (karaGuests + "名様・") : "";
+  return {charge: charge, blocks: blocks, label: guestLabel + "ご利用 " + h + "時間" + m + "分"};
 }
 
 function fetchKaraStart(){
@@ -363,10 +386,42 @@ function fetchKaraStart(){
     .then(function(res){
       if(res && res.success && res.startTime){
         karaStart = Number(res.startTime);
+        if(res.guests){
+          karaGuests = Number(res.guests);   // 同じテーブルの2台目以降はモーダル不要
+        } else {
+          openGuestsModal();                 // 初回のみ「何名様ですか？」を表示
+        }
         updateKaraUI();
       }
     })
     .catch(function(){});
+}
+
+// ── 人数入力モーダル（Index_60で追加） ──────────────────────
+function openGuestsModal(){
+  var ov = document.getElementById("guests-overlay");
+  if(ov) ov.style.display = "block";
+}
+
+function selectGuests(n){
+  var btns = document.querySelectorAll(".guests-btn");
+  for(var i=0;i<btns.length;i++){ btns[i].disabled = true; }
+  fetch(GAS_WEBAPP_URL + "?action=setGuests&table=" + encodeURIComponent(TABLE_NO) + "&guests=" + n)
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success){
+        karaGuests = Number(res.guests);
+        document.getElementById("guests-overlay").style.display = "none";
+        updateKaraUI();
+      } else {
+        for(var i=0;i<btns.length;i++){ btns[i].disabled = false; }
+        alert("人数の登録に失敗しました。もう一度お試しください。");
+      }
+    })
+    .catch(function(){
+      for(var i=0;i<btns.length;i++){ btns[i].disabled = false; }
+      alert("通信エラーです。もう一度お試しください。");
+    });
 }
 
 function updateKaraUI(){
