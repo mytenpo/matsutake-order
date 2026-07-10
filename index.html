@@ -357,7 +357,8 @@ function calcKaraCharge(){
 
 function fetchKaraStart(){
   if(!TABLE_NO) return;
-  fetch(GAS_WEBAPP_URL + "?action=getKaraokeInfo&table=" + encodeURIComponent(TABLE_NO))
+  // ページを開いた時点でGASに開始時刻を登録（初回のみ記録、以降は既存の時刻を返す）
+  fetch(GAS_WEBAPP_URL + "?action=startKaraoke&table=" + encodeURIComponent(TABLE_NO))
     .then(function(r){ return r.json(); })
     .then(function(res){
       if(res && res.success && res.startTime){
