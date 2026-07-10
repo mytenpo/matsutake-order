@@ -2,25 +2,63 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>MATSUTAKE キッチン通知</title>
+<title>MATUTAKE キッチンダッシュボード</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   body{
     margin:0; padding:0; font-family:sans-serif; background:#07070f; color:#fff;
-    min-height:100vh; display:flex; flex-direction:column; align-items:center;
   }
   .header{
-    width:100%; padding:20px; text-align:center; background:#C41E5A;
-    font-size:28px; font-weight:900; box-sizing:border-box;
+    width:100%; padding:14px 20px; text-align:center; background:#C41E5A;
+    font-size:24px; font-weight:900; box-sizing:border-box;
   }
-  .status{ margin:20px; font-size:20px; text-align:center; color:#aaa; }
+  .status{ margin:8px 12px; font-size:15px; text-align:center; color:#aaa; }
+  .enable-wrap{ text-align:center; }
   .enable-btn{
-    margin-top:40px; padding:20px 40px; font-size:24px; font-weight:700;
+    margin-top:30px; padding:20px 40px; font-size:24px; font-weight:700;
     border-radius:12px; border:none; background:#ff2d78; color:#fff; cursor:pointer;
   }
-  .list{ width:100%; max-width:600px; padding:0 16px; box-sizing:border-box; }
+
+  /* ── 3カラムレイアウト ─────────────────────────── */
+  .dash{
+    display:grid; grid-template-columns:1fr 1.4fr 1fr; gap:10px;
+    padding:10px; box-sizing:border-box; align-items:start;
+  }
+  @media (max-width:900px){
+    .dash{ grid-template-columns:1fr; }
+    .col-feed{ order:-1; }
+  }
+  .col{ display:flex; flex-direction:column; gap:10px; }
+
+  /* ── テーブルサマリーパネル ────────────────────── */
+  .tpanel{
+    background:#12121e; border-radius:12px; padding:12px 14px;
+    border:1px solid rgba(255,255,255,.08);
+  }
+  .tpanel.active{ border-color:rgba(255,45,120,.45); }
+  .tpanel-head{ display:flex; justify-content:space-between; align-items:center; }
+  .tpanel-title{ font-size:19px; font-weight:900; color:#ff9ec2; }
+  .tpanel-visit{ font-size:12px; color:#888; }
+  .tpanel-row{ display:flex; justify-content:space-between; font-size:14px; margin-top:6px; color:#ccc; }
+  .tpanel-row .val{ color:#fff; font-weight:700; }
+  .tpanel-items{ font-size:13px; color:#9ad; margin-top:6px; line-height:1.5; word-break:break-all; }
+  .tpanel-total{
+    display:flex; justify-content:space-between; margin-top:8px; padding-top:8px;
+    border-top:1px dashed rgba(255,255,255,.15); font-size:16px; font-weight:900; color:#ffd34d;
+  }
+  .guests-adjust{ display:flex; align-items:center; gap:8px; }
+  .gbtn{
+    width:30px; height:30px; border-radius:8px; border:1px solid rgba(255,255,255,.2);
+    background:rgba(255,255,255,.06); color:#fff; font-size:17px; font-weight:900; cursor:pointer;
+  }
+  .gbtn:disabled{ opacity:.4; }
+  .gval{ min-width:44px; text-align:center; font-size:15px; font-weight:700; }
+  .empty-note{ font-size:13px; color:#666; margin-top:6px; }
+
+  /* ── 中央：注文フィード ────────────────────────── */
+  .feed-title{ font-size:16px; font-weight:900; color:#aaa; padding:2px 4px; }
   .order-card{
-    background:#15151f; border-radius:10px; padding:14px 16px; margin-bottom:10px;
+    background:#15151f; border-radius:10px; padding:12px 14px;
     border-left:6px solid #ff2d78;
   }
   .order-top{ display:flex; justify-content:space-between; align-items:center; }
@@ -29,13 +67,13 @@
     0%,100%{ background:#15151f; }
     50%{ background:#4a1030; }
   }
-  .order-name{ font-size:18px; font-weight:700; }
-  .order-meta{ font-size:14px; color:#999; margin-top:4px; }
-  .order-time{ font-size:16px; color:#ff9ec2; white-space:nowrap; }
-  .status-btns{ display:flex; gap:8px; margin-top:12px; }
+  .order-name{ font-size:17px; font-weight:700; }
+  .order-meta{ font-size:13px; color:#999; margin-top:4px; }
+  .order-time{ font-size:15px; color:#ff9ec2; white-space:nowrap; }
+  .status-btns{ display:flex; gap:8px; margin-top:10px; }
   .status-btn{
-    flex:1; padding:10px 4px; border-radius:8px; border:1px solid rgba(255,255,255,.15);
-    background:rgba(255,255,255,.05); color:#aaa; font-size:14px; font-weight:700;
+    flex:1; padding:9px 4px; border-radius:8px; border:1px solid rgba(255,255,255,.15);
+    background:rgba(255,255,255,.05); color:#aaa; font-size:13px; font-weight:700;
     cursor:pointer; font-family:inherit;
   }
   .status-btn:disabled{ opacity:.5; }
@@ -45,10 +83,18 @@
 </style>
 </head>
 <body>
-  <div class="header">🔔 MATSUTAKE キッチン通知 <span style="font-size:14px;opacity:.6;">v4</span></div>
+  <div class="header">🎤 MATUTAKE キッチンダッシュボード <span style="font-size:13px;opacity:.6;">v5</span></div>
   <div class="status" id="status">通知を有効にしてください</div>
-  <button class="enable-btn" id="enableBtn">🔊 通知を有効にする</button>
-  <div class="list" id="list"></div>
+  <div class="enable-wrap"><button class="enable-btn" id="enableBtn">🔊 通知を有効にする</button></div>
+
+  <div class="dash" id="dash" style="display:none;">
+    <div class="col" id="col-left"></div>
+    <div class="col col-feed">
+      <div class="feed-title">📋 注文フィード（新しい順）</div>
+      <div id="list"></div>
+    </div>
+    <div class="col" id="col-right"></div>
+  </div>
 
 <script>
 var enabled = false;
@@ -69,7 +115,8 @@ function base64ToArrayBuffer(base64){
 
 async function initAudio(){
   try{
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    var AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
     if(audioCtx.state === "suspended"){ await audioCtx.resume(); }
     var base64 = BEEP_DATA_URI.split(",")[1];
     var arrayBuf = base64ToArrayBuffer(base64);
@@ -80,18 +127,15 @@ async function initAudio(){
 }
 
 function beep(){
+  if(!audioCtx || !audioBuffer) return;
   try{
-    if(!audioCtx || !audioBuffer){
-      document.getElementById("status").textContent = "音声が初期化されていません";
-      return;
-    }
     if(audioCtx.state === "suspended"){ audioCtx.resume(); }
-    var source = audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioCtx.destination);
-    source.start(0);
+    var src = audioCtx.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(audioCtx.destination);
+    src.start(0);
   }catch(e){
-    document.getElementById("status").textContent = "音声再生エラー: " + e;
+    document.getElementById("status").textContent = "再生エラー: " + e;
   }
 }
 
@@ -100,30 +144,26 @@ async function requestWakeLock(){
   try{
     if("wakeLock" in navigator){
       wakeLock = await navigator.wakeLock.request("screen");
-      wakeLock.addEventListener("release", function(){
-        document.getElementById("status").textContent += "（画面ロック解除）";
-      });
     }
-  }catch(e){
-    document.getElementById("status").textContent = "画面スリープ防止が使えません: " + e;
-  }
+  }catch(e){}
 }
 
 document.addEventListener("visibilitychange", function(){
   if(document.visibilityState === "visible" && enabled){
     requestWakeLock();
     if(audioCtx && audioCtx.state === "suspended"){ audioCtx.resume(); }
-    poll(); // タブに戻った瞬間、溜まっていた注文をすぐチェック
+    poll();
   }
 });
 
 document.getElementById("enableBtn").addEventListener("click", async function(){
-  await initAudio(); // ユーザー操作直後にAudioContextを初期化・アンロック
-  beep(); // 確認のため一度鳴らす
+  await initAudio();
+  beep();
   enabled = true;
   requestWakeLock();
   document.getElementById("status").textContent = "通知有効：注文を監視中…";
   document.getElementById("enableBtn").style.display = "none";
+  document.getElementById("dash").style.display = "grid";
   poll();
   setInterval(poll, 8000);
 });
@@ -134,16 +174,37 @@ function orderKey(o){
 
 var GAS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbzHkfQ0hms6isOHg09y83rUktyjjO7vMCWuGv0yeeSZrZkkDhL8bKLJEGu87zJyv1h6tw/exec";
 
+// カラオケチャージ（1人あたり：最初の2時間¥1,500 ＋ 以降2時間枠ごと¥500）
+var KARA_BASE = 1500, KARA_ADD = 500, KARA_BLOCK_MS = 2*60*60*1000;
+var clockOffset = 0;     // サーバー時刻との差（端末の時計ズレ対策）
+var lastTables = null;   // 直近のテーブル情報
+var lastOrders = [];
+
+function calcKara(karaStart, guests){
+  if(!karaStart) return null;
+  var now = Date.now() + clockOffset;
+  var elapsed = Math.max(0, now - karaStart);
+  var blocks = Math.floor(elapsed / KARA_BLOCK_MS) + 1;
+  var per = KARA_BASE + (blocks-1)*KARA_ADD;
+  var g = guests || 1;
+  var h = Math.floor(elapsed/3600000), m = Math.floor((elapsed%3600000)/60000);
+  return { charge: per*g, label: h+"時間"+m+"分" };
+}
+
 function poll(){
   var now = new Date().toLocaleTimeString("ja-JP");
-  fetch(GAS_WEBAPP_URL + "?action=getTodayOrders")
+  fetch(GAS_WEBAPP_URL + "?action=getTablesInfo")
     .then(function(r){ return r.json(); })
     .then(function(res){
       if(!res || !res.success){
         document.getElementById("status").textContent = "取得失敗("+now+"): " + (res && res.error);
         return;
       }
+      if(res.serverNow){ clockOffset = res.serverNow - Date.now(); }
       var orders = res.orders || [];
+      lastOrders = orders;
+      lastTables = res.tables || {};
+
       var newOnes = [];
       orders.forEach(function(o){
         var k = orderKey(o);
@@ -152,19 +213,105 @@ function poll(){
           if(!firstLoad) newOnes.push(o);
         }
       });
-      if(newOnes.length > 0 && enabled){
-        beep();
-      }
+      if(newOnes.length > 0 && enabled){ beep(); }
+
       renderList(orders, newOnes);
+      renderTables();
       firstLoad = false;
       document.getElementById("status").textContent =
-        "監視中（最終チェック: "+now+"／注文件数: "+orders.length+"）";
+        "監視中（最終チェック: "+now+"／本日の注文: "+orders.length+"件）";
     })
     .catch(function(err){
       document.getElementById("status").textContent = "取得エラー("+now+"): " + err;
     });
 }
 
+// ── 左右のテーブルサマリー ──────────────────────────
+function renderTables(){
+  if(!lastTables) return;
+  var left = ["1","2","3"], right = ["4","5","6"];
+  document.getElementById("col-left").innerHTML  = left.map(tablePanelHTML).join("");
+  document.getElementById("col-right").innerHTML = right.map(tablePanelHTML).join("");
+}
+
+function tablePanelHTML(t){
+  var info = lastTables[t] || {};
+  var k = calcKara(info.karaStart, info.guests);
+  var active = !!info.karaStart;
+
+  // 現在の来店回・キャンセル以外の品目を「品名×数」で集計
+  var items = {};
+  lastOrders.forEach(function(o){
+    if(o.table !== t) return;
+    if(o.visit !== info.visit) return;
+    if(o.status === "キャンセル") return;
+    items[o.name] = (items[o.name]||0) + o.qty;
+  });
+  var itemNames = Object.keys(items);
+  var itemsHTML = itemNames.length
+    ? itemNames.map(function(n){ return n + "×" + items[n]; }).join("、")
+    : "";
+
+  var orderTotal = info.orderTotal || 0;
+  var charge = k ? k.charge : 0;
+  var total = orderTotal + charge;
+
+  var guestsLabel = info.guests ? (info.guests + "名様") : "未入力";
+
+  var html = '<div class="tpanel'+(active?' active':'')+'">'
+    + '<div class="tpanel-head">'
+    +   '<div class="tpanel-title">テーブル '+t+'</div>'
+    +   '<div class="tpanel-visit">'+(info.visit||1)+'回転目</div>'
+    + '</div>';
+
+  if(!active && itemNames.length===0){
+    html += '<div class="empty-note">ご来店なし</div></div>';
+    return html;
+  }
+
+  html += '<div class="tpanel-row"><span>人数</span>'
+    + '<span class="guests-adjust">'
+    +   '<button class="gbtn" onclick="adjustGuests(\''+t+'\',-1)">－</button>'
+    +   '<span class="gval">'+guestsLabel+'</span>'
+    +   '<button class="gbtn" onclick="adjustGuests(\''+t+'\',1)">＋</button>'
+    + '</span></div>';
+
+  if(k){
+    html += '<div class="tpanel-row"><span>🎤 チャージ（'+k.label+'）</span><span class="val">¥'+charge.toLocaleString()+'</span></div>';
+  }
+  html += '<div class="tpanel-row"><span>ご注文</span><span class="val">¥'+orderTotal.toLocaleString()+'</span></div>';
+  if(itemsHTML){
+    html += '<div class="tpanel-items">'+itemsHTML+'</div>';
+  }
+  html += '<div class="tpanel-total"><span>合計（チャージ込）</span><span>¥'+total.toLocaleString()+'</span></div>';
+  html += '</div>';
+  return html;
+}
+
+// キッチン側での人数補正（お客様の入力ミス・途中合流に対応）
+function adjustGuests(table, delta){
+  var info = lastTables && lastTables[table];
+  var cur = (info && info.guests) ? info.guests : 0;
+  var next = cur + delta;
+  if(next < 1) next = 1;
+  if(next > 20) next = 20;
+  if(next === cur) return;
+  fetch(GAS_WEBAPP_URL + "?action=setGuests&table="+encodeURIComponent(table)+"&guests="+next)
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success){
+        lastTables[table].guests = res.guests;
+        renderTables();
+      }else{
+        document.getElementById("status").textContent = "人数更新失敗: " + (res && res.error);
+      }
+    })
+    .catch(function(err){
+      document.getElementById("status").textContent = "人数更新エラー: " + err;
+    });
+}
+
+// ── 中央：注文フィード ──────────────────────────────
 function renderList(orders, newOnes){
   var newKeys = new Set(newOnes.map(orderKey));
   var recent;
@@ -172,10 +319,9 @@ function renderList(orders, newOnes){
     recent = orders.slice().sort(function(a, b){
       var ta = String(a.time), tb = String(b.time);
       if (ta === tb) return 0;
-      return ta < tb ? 1 : -1; // 時刻の新しい順（降順）
+      return ta < tb ? 1 : -1;
     }).slice(0, 20);
   }catch(e){
-    document.getElementById("status").textContent = "並び替えエラー: " + e;
     recent = orders.slice(-20).reverse();
   }
   var list = document.getElementById("list");
@@ -207,6 +353,7 @@ function escapeAttr_(s){
 }
 
 function changeStatus(btn, table, time, name, visit, newStatus){
+  if(newStatus === "キャンセル" && !confirm("この注文をキャンセルにしますか？")) return;
   btn.closest(".status-btns").querySelectorAll(".status-btn").forEach(function(b){ b.disabled = true; });
   fetch(GAS_WEBAPP_URL + "?action=updateOrderStatus"
     + "&table=" + encodeURIComponent(table)
@@ -219,12 +366,15 @@ function changeStatus(btn, table, time, name, visit, newStatus){
       if(!res || !res.success){
         document.getElementById("status").textContent = "更新失敗: " + (res && res.error);
       }
-      poll(); // 最新状態を再取得して表示を更新
+      poll();
     })
     .catch(function(err){
       document.getElementById("status").textContent = "更新エラー: " + err;
     });
 }
+
+// チャージの経過時間表示を1分ごとに更新（ポーリングとは別に画面だけ更新）
+setInterval(function(){ if(enabled) renderTables(); }, 60000);
 </script>
 </body>
 </html>
