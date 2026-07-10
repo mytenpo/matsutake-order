@@ -149,8 +149,16 @@ body{background:#07070f;min-height:100vh;font-family:'Hiragino Sans','Noto Sans 
   <div class="history-wrap">
     <div class="refresh-note" id="refresh-note">30秒ごとに自動更新</div>
     <div id="hist-total-row" style="display:none" class="hist-total-row">
-      <span class="hist-total-label">本日合計</span>
-      <span class="hist-total-amt" id="hist-total">¥0</span>
+      <span class="hist-total-label">ご注文合計</span>
+      <span class="hist-total-amt" id="hist-total" style="font-size:30px;color:#e8e8f5">¥0</span>
+    </div>
+    <div id="kara-charge-row" style="display:none" class="hist-total-row">
+      <span class="hist-total-label">🎤 カラオケチャージ<br><span id="kara-elapsed" style="font-size:20px;color:#666"></span></span>
+      <span class="hist-total-amt" id="kara-charge" style="font-size:30px;color:#e8e8f5">¥0</span>
+    </div>
+    <div id="now-total-row" style="display:none" class="hist-total-row">
+      <span class="hist-total-label">現在金額</span>
+      <span class="hist-total-amt" id="now-total">¥0</span>
     </div>
     <div id="hist-list"><div class="hist-empty">注文を読み込み中...</div></div>
   </div>
@@ -327,6 +335,50 @@ var FOOD_SUBS = {
     {id:"f16b",emoji:"🐴",name:"馬刺しスライス（赤身）（二人前）",price:1200,tag:""},
   ]}
 };
+
+// ── カラオケチャージ ────────────────────────────────────────
+// 最初の2時間: ¥1,500 / 以降2時間ごとに ¥500 加算（新しい2時間枠に入った瞬間に加算）
+var KARA_BASE = 1500;
+var KARA_ADD = 500;
+var KARA_BLOCK_MS = 2 * 60 * 60 * 1000;
+var karaStart = null;        // 開始時刻(ms) GASから取得（当日最初の注文時刻）
+var lastOrderTotal = 0;      // 履歴の注文合計（キャンセル除く）
+
+function calcKaraCharge(){
+  if(!karaStart) return null;
+  var elapsed = Date.now() - karaStart;
+  if(elapsed < 0) elapsed = 0;
+  var blocks = Math.floor(elapsed / KARA_BLOCK_MS) + 1;  // 入店時点で1ブロック目
+  var charge = KARA_BASE + (blocks - 1) * KARA_ADD;
+  var h = Math.floor(elapsed / 3600000);
+  var m = Math.floor((elapsed % 3600000) / 60000);
+  return {charge: charge, blocks: blocks, label: "ご利用 " + h + "時間" + m + "分"};
+}
+
+function fetchKaraStart(){
+  if(!TABLE_NO) return;
+  fetch(GAS_WEBAPP_URL + "?action=getKaraokeInfo&table=" + encodeURIComponent(TABLE_NO))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success && res.startTime){
+        karaStart = Number(res.startTime);
+        updateKaraUI();
+      }
+    })
+    .catch(function(){});
+}
+
+function updateKaraUI(){
+  var k = calcKaraCharge();
+  var chargeRow = document.getElementById("kara-charge-row");
+  var nowRow = document.getElementById("now-total-row");
+  if(!k){ chargeRow.style.display="none"; nowRow.style.display="none"; return; }
+  document.getElementById("kara-charge").textContent = "¥" + k.charge.toLocaleString();
+  document.getElementById("kara-elapsed").textContent = k.label;
+  document.getElementById("now-total").textContent = "¥" + (lastOrderTotal + k.charge).toLocaleString();
+  chargeRow.style.display = "flex";
+  nowRow.style.display = "flex";
+}
 
 var cart = {};
 var currentDrinkSub = "beer";
@@ -550,7 +602,7 @@ function submitOrder(){
   var items = Object.entries(cart).map(function(e){
     var item = all.find(function(x){return x.id===e[0];});
     var p = getPrice(item);
-    return {name:item.name+(HH&&isDrinkItem(item.id)&&!item.id.startsWith("b")&&item.id!=="d16"&&item.id!=="d17"?" [HH]":""),emoji:item.emoji,price:p,qty:e[1]};
+    return {name:item.name+(HH&&isDrinkItem(item.id)&&!item.id.startsWith("b")&&item.id!=="d16"&&item.id!=="d17"?" [HH]":""),emoji:item.emoji,price:p,qty:e[1],cat:(item.id.startsWith("f")?"food":"drink")};
   });
   var subtotal = items.reduce(function(s,x){return s+x.price*x.qty;}, 0);
   var tax = Math.floor(subtotal * 0.1);
@@ -569,6 +621,7 @@ function submitOrder(){
         document.getElementById("suc-table").textContent = TABLE_NO?"テーブル: "+TABLE_NO:"";
         document.getElementById("success-screen").className="success-screen show";
         cart={}; updateCartUI(); renderDrink(); renderFood();
+        if(!karaStart) fetchKaraStart();
       } else { btn.disabled=false; btn.innerHTML="注文する"; }
     })
     .catch(function(){ btn.disabled=false; btn.innerHTML="注文する"; });
@@ -606,11 +659,16 @@ function loadHistory(){
       var orders = res.orders;
       if(orders.length===0){
         document.getElementById("hist-list").innerHTML='<div class="hist-empty">まだ注文はありません</div>';
-        document.getElementById("hist-total-row").style.display="none"; return;
+        document.getElementById("hist-total-row").style.display="none";
+        lastOrderTotal = 0;
+        updateKaraUI();
+        return;
       }
       var totalAmt = orders.reduce(function(s,o){return s+(o.status==="キャンセル"?0:(Number(o.amount)||0));}, 0);
+      lastOrderTotal = totalAmt;
       document.getElementById("hist-total").textContent="¥"+totalAmt.toLocaleString();
       document.getElementById("hist-total-row").style.display="flex";
+      if(!karaStart) fetchKaraStart(); else updateKaraUI();
       document.getElementById("hist-list").innerHTML = orders.map(function(o){
         var isDone = o.status==="対応済み";
         var isCancel = o.status==="キャンセル";
@@ -621,6 +679,8 @@ function loadHistory(){
 }
 
 renderDrink(); renderFood();
+fetchKaraStart();
+setInterval(updateKaraUI, 60000);  // 経過時間を1分ごとに再計算
 </script>
 </div>
 </body>
