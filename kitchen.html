@@ -67,7 +67,12 @@
     0%,100%{ background:#15151f; }
     50%{ background:#4a1030; }
   }
-  .order-name{ font-size:17px; font-weight:700; }
+  .tbadge{
+    display:inline-block; min-width:56px; text-align:center;
+    background:#ff2d78; color:#fff; font-size:22px; font-weight:900;
+    padding:6px 8px; border-radius:10px; margin-right:10px; vertical-align:middle;
+  }
+  .order-name{ font-size:17px; font-weight:700; display:inline; vertical-align:middle; }
   .order-meta{ font-size:13px; color:#999; margin-top:4px; }
   .order-time{ font-size:15px; color:#ff9ec2; white-space:nowrap; }
   .status-btns{ display:flex; gap:8px; margin-top:10px; }
@@ -83,7 +88,7 @@
 </style>
 </head>
 <body>
-  <div class="header">🎤 MATUTAKE キッチンダッシュボード <span style="font-size:13px;opacity:.6;">v5</span></div>
+  <div class="header">🎤 MATUTAKE キッチンダッシュボード <span style="font-size:13px;opacity:.6;">v5.2</span></div>
   <div class="status" id="status">通知を有効にしてください</div>
   <div class="enable-wrap"><button class="enable-btn" id="enableBtn">🔊 通知を有効にする</button></div>
 
@@ -126,13 +131,21 @@ async function initAudio(){
   }
 }
 
+var BEEP_GAIN = 2.5;   // 音量倍率（1=等倍。2.5=+150%。大きすぎて割れる場合はここを下げる）
+
 function beep(){
   if(!audioCtx || !audioBuffer) return;
   try{
     if(audioCtx.state === "suspended"){ audioCtx.resume(); }
     var src = audioCtx.createBufferSource();
     src.buffer = audioBuffer;
-    src.connect(audioCtx.destination);
+    var gain = audioCtx.createGain();
+    gain.gain.value = BEEP_GAIN;
+    // 音割れをある程度抑えるコンプレッサーを挟む
+    var comp = audioCtx.createDynamicsCompressor();
+    src.connect(gain);
+    gain.connect(comp);
+    comp.connect(audioCtx.destination);
     src.start(0);
   }catch(e){
     document.getElementById("status").textContent = "再生エラー: " + e;
@@ -335,8 +348,9 @@ function renderList(orders, newOnes){
     }).join("");
     return '<div class="order-card'+(isNew?' new':'')+'">'
       + '<div class="order-top">'
-      + '<div><div class="order-name">'+o.name+' ×'+o.qty+'</div>'
-      + '<div class="order-meta">テーブル '+o.table+'（'+o.visit+'回目）</div></div>'
+      + '<div><span class="tbadge">'+o.table+'卓</span>'
+      + '<span class="order-name">'+o.name+' ×'+o.qty+'</span>'
+      + '<div class="order-meta">'+o.visit+'回転目</div></div>'
       + '<div class="order-time">'+o.time+'</div></div>'
       + '<div class="status-btns">'+btnsHTML+'</div>'
       + '</div>';
