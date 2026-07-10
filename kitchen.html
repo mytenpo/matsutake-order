@@ -21,9 +21,9 @@
   .list{ width:100%; max-width:600px; padding:0 16px; box-sizing:border-box; }
   .order-card{
     background:#15151f; border-radius:10px; padding:14px 16px; margin-bottom:10px;
-    display:flex; justify-content:space-between; align-items:center;
     border-left:6px solid #ff2d78;
   }
+  .order-top{ display:flex; justify-content:space-between; align-items:center; }
   .order-card.new{ animation:flash 1.2s ease-in-out 3; }
   @keyframes flash{
     0%,100%{ background:#15151f; }
@@ -32,6 +32,16 @@
   .order-name{ font-size:18px; font-weight:700; }
   .order-meta{ font-size:14px; color:#999; margin-top:4px; }
   .order-time{ font-size:16px; color:#ff9ec2; white-space:nowrap; }
+  .status-btns{ display:flex; gap:8px; margin-top:12px; }
+  .status-btn{
+    flex:1; padding:10px 4px; border-radius:8px; border:1px solid rgba(255,255,255,.15);
+    background:rgba(255,255,255,.05); color:#aaa; font-size:14px; font-weight:700;
+    cursor:pointer; font-family:inherit;
+  }
+  .status-btn:disabled{ opacity:.5; }
+  .status-btn.status-pending.active{ background:rgba(255,180,0,.18); color:#ffb400; border-color:rgba(255,180,0,.4); }
+  .status-btn.status-done.active{ background:rgba(16,185,129,.18); color:#10b981; border-color:rgba(16,185,129,.4); }
+  .status-btn.status-cancel.active{ background:rgba(255,45,120,.18); color:#ff2d78; border-color:rgba(255,45,120,.4); }
 </style>
 </head>
 <body>
@@ -102,6 +112,8 @@ async function requestWakeLock(){
 document.addEventListener("visibilitychange", function(){
   if(document.visibilityState === "visible" && enabled){
     requestWakeLock();
+    if(audioCtx && audioCtx.state === "suspended"){ audioCtx.resume(); }
+    poll(); // タブに戻った瞬間、溜まっていた注文をすぐチェック
   }
 });
 
@@ -167,13 +179,51 @@ function renderList(orders, newOnes){
     recent = orders.slice(-20).reverse();
   }
   var list = document.getElementById("list");
+  var STATUS_OPTIONS = ["未対応", "対応済み", "キャンセル"];
   list.innerHTML = recent.map(function(o){
     var isNew = newKeys.has(orderKey(o));
+    var btnsHTML = STATUS_OPTIONS.map(function(s){
+      var active = (o.status === s);
+      return '<button class="status-btn '+statusClass_(s)+(active?' active':'')+'" '
+        + 'onclick="changeStatus(this,\''+escapeAttr_(o.table)+'\',\''+escapeAttr_(o.time)+'\',\''+escapeAttr_(o.name)+'\','+o.visit+',\''+s+'\')">'+s+'</button>';
+    }).join("");
     return '<div class="order-card'+(isNew?' new':'')+'">'
+      + '<div class="order-top">'
       + '<div><div class="order-name">'+o.name+' ×'+o.qty+'</div>'
-      + '<div class="order-meta">テーブル '+o.table+'（'+o.visit+'回目）・'+o.status+'</div></div>'
-      + '<div class="order-time">'+o.time+'</div></div>';
+      + '<div class="order-meta">テーブル '+o.table+'（'+o.visit+'回目）</div></div>'
+      + '<div class="order-time">'+o.time+'</div></div>'
+      + '<div class="status-btns">'+btnsHTML+'</div>'
+      + '</div>';
   }).join("");
+}
+
+function statusClass_(s){
+  if(s==="未対応") return "status-pending";
+  if(s==="対応済み") return "status-done";
+  return "status-cancel";
+}
+function escapeAttr_(s){
+  return String(s).replace(/'/g, "\\'");
+}
+
+function changeStatus(btn, table, time, name, visit, newStatus){
+  btn.closest(".status-btns").querySelectorAll(".status-btn").forEach(function(b){ b.disabled = true; });
+  fetch(GAS_WEBAPP_URL + "?action=updateOrderStatus"
+    + "&table=" + encodeURIComponent(table)
+    + "&time=" + encodeURIComponent(time)
+    + "&name=" + encodeURIComponent(name)
+    + "&visit=" + encodeURIComponent(visit)
+    + "&status=" + encodeURIComponent(newStatus))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(!res || !res.success){
+        document.getElementById("status").textContent = "更新失敗: " + (res && res.error);
+      }
+      poll(); // 最新状態を再取得して表示を更新
+    })
+    .catch(function(err){
+      document.getElementById("status").textContent = "更新エラー: " + err;
+    });
 }
 </script>
 </body>
