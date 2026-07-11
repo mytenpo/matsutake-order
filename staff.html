@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>🍄 MATUTAKE スタッフ注文</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#07070f;min-height:100vh;font-family:'Hiragino Sans','Noto Sans JP',sans-serif;color:#e8e8f5;padding-bottom:90px}
+.hdr{background:rgba(7,7,15,.97);border-bottom:1px solid rgba(255,45,120,.25);padding:10px 12px;text-align:center;position:sticky;top:0;z-index:100}
+.hdr b{font-size:19px;font-weight:900;letter-spacing:1px;background:linear-gradient(135deg,#ff6ba0,#ff2d78);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hdr small{color:#666;font-size:11px;margin-left:6px}
+.wrap{max-width:560px;margin:0 auto;padding:10px 12px}
+.tgrid{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.tbtn{padding:12px 0;border-radius:10px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#e8e8f5;font-size:17px;font-weight:800;cursor:pointer;font-family:inherit}
+.tbtn.active{border-color:#ff2d78;background:rgba(255,45,120,.15);color:#ff2d78}
+.info{display:none;margin-top:8px;background:rgba(0,212,255,.06);border:1px solid rgba(0,212,255,.25);border-radius:10px;padding:8px 10px;font-size:13px;color:#9adfff}
+.info.show{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.info button{padding:6px 10px;border-radius:8px;border:1px solid rgba(0,212,255,.4);background:transparent;color:#00d4ff;font-size:13px;cursor:pointer;font-family:inherit}
+.tabs{display:flex;gap:6px;overflow-x:auto;margin:12px 0 8px;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+.tab{flex:0 0 auto;padding:8px 12px;border-radius:20px;border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.04);color:#bbb;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+.tab.active{border-color:#ff2d78;background:rgba(255,45,120,.15);color:#ff2d78}
+.row{display:flex;align-items:center;gap:8px;padding:9px 4px;border-bottom:1px dashed rgba(255,255,255,.08)}
+.row.sold{opacity:.35;pointer-events:none}
+.row .em{font-size:20px;width:26px;text-align:center}
+.row .nm{flex:1;font-size:14.5px;font-weight:600;line-height:1.3}
+.row .nm small{display:block;color:#777;font-size:11px;font-weight:400}
+.row .pr{font-size:13px;color:#aaa;width:58px;text-align:right}
+.row .pr.hh{color:#ffd166}
+.qc{display:flex;align-items:center;gap:6px}
+.qc button{width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-size:18px;font-weight:800;cursor:pointer;font-family:inherit}
+.qc button:active{background:rgba(255,45,120,.3)}
+.qc .q{width:22px;text-align:center;font-size:16px;font-weight:800}
+.qc .q.on{color:#ff2d78}
+.bar{position:fixed;left:0;right:0;bottom:0;background:rgba(7,7,15,.97);border-top:1px solid rgba(255,45,120,.3);padding:10px 14px calc(10px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:10px;z-index:100}
+.bar .tot{flex:1;font-size:15px;color:#aaa}
+.bar .tot b{display:block;font-size:20px;color:#fff}
+.send{padding:13px 22px;border-radius:12px;border:none;background:linear-gradient(135deg,#ff2d78,#ff6b35);color:#fff;font-size:17px;font-weight:800;cursor:pointer;font-family:inherit}
+.send:disabled{opacity:.4}
+.clear{padding:13px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#888;font-size:14px;cursor:pointer;font-family:inherit}
+.toast{position:fixed;top:64px;left:50%;transform:translateX(-50%);background:#12b76a;color:#fff;font-size:15px;font-weight:700;padding:12px 20px;border-radius:12px;z-index:200;display:none;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+.toast.err{background:#e5484d}
+.hint{color:#666;font-size:12px;text-align:center;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="hdr"><b>🍄 MATUTAKE スタッフ注文</b><small>口頭オーダー入力 v1</small></div>
+<div class="wrap">
+  <div class="tgrid" id="tgrid"></div>
+  <div class="info" id="info"></div>
+  <div class="tabs" id="tabs"></div>
+  <div id="list"></div>
+  <div class="hint">💡 テーブル選択 → 品目の＋ → 下の送信。キッチン・会計にお客様注文と同じ形で反映されます。</div>
+</div>
+<div class="bar">
+  <div class="tot"><span id="cnt">0点</span><b id="tot">¥0</b></div>
+  <button class="clear" onclick="clearCart()">クリア</button>
+  <button class="send" id="send" onclick="submitOrder()" disabled>送信</button>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+var GAS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbzHkfQ0hms6isOHg09y83rUktyjjO7vMCWuGv0yeeSZrZkkDhL8bKLJEGu87zJyv1h6tw/exec";
+
+var FOOD_SUBS = {
+  snack:{label:"⚡ ￥３８０スピード", items:[
+    {id:"f1",emoji:"🫘",name:"えだまめ",price:380,tag:""},
+    {id:"f2",emoji:"🌶",name:"キムチ",price:380,tag:""},
+    {id:"f3",emoji:"🥒",name:"もろキュー",price:380,tag:""},
+    {id:"f4",emoji:"🥕",name:"唐千寿",price:380,tag:""},
+  ]},
+  main:{label:"🍽 ￥４８０～お食事", items:[
+    {id:"f5",emoji:"🥦",name:"ブロッコリーの彩りサラダ",price:480,tag:""},
+    {id:"f6",emoji:"🍜",name:"ソース焼きそば（一人前）",price:480,tag:""},
+    {id:"f6b",emoji:"🍜",name:"ソース焼きそば（二人前）",price:900,tag:""},
+    {id:"f17",emoji:"🍜",name:"塩焼きそば（一人前）",price:480,tag:""},
+    {id:"f17b",emoji:"🍜",name:"塩焼きそば（二人前）",price:900,tag:""},
+    {id:"f18",emoji:"🍗",name:"から揚げ（一人前）",price:480,tag:""},
+    {id:"f19",emoji:"🦐",name:"魚介のアヒージョ＆バケット",price:680,tag:""},
+    {id:"f8",emoji:"🌿",name:"まるごとオクラの旨塩だれ",price:480,tag:""},
+    {id:"f9",emoji:"🍅",name:"クリームチーズのトマトスライス",price:580,tag:""},
+    {id:"f10",emoji:"🥚",name:"京都九条ねぎの料亭だし巻き",price:480,tag:""},
+    {id:"f11",emoji:"🍢",name:"とろーり月見つくね（卵黄IN）",price:480,tag:""},
+    {id:"f12",emoji:"🥦",name:"ピリ辛ガーリックブロッコリー",price:480,tag:""},
+    {id:"f14",emoji:"🫕",name:"ラタトゥイユ＆バケット",price:780,tag:""},
+    {id:"f15",emoji:"🧀",name:"いぶりがっこクリームチーズ＆バケット",price:880,tag:""},
+    {id:"f16",emoji:"🐴",name:"馬刺しスライス（赤身）（一人前）",price:680,tag:""},
+    {id:"f16b",emoji:"🐴",name:"馬刺しスライス（赤身）（二人前）",price:1200,tag:""},
+  ]}
+};
+
+var DRINK_SUBS = {
+  beer:{label:"🍺 ビール・ハイボール", items:[
+    {id:"d1",emoji:"🍺",name:"キリン一番搾り",price:600,tag:"生ビール"},
+    {id:"d31",emoji:"🍻",name:"スプリングバレー 豊潤ラガー",price:700,tag:"クラフトビール"},
+    {id:"d32",emoji:"🍻",name:"よなよなエール",price:700,tag:"クラフトビール"},
+    {id:"d33",emoji:"🍻",name:"インドの青鬼",price:700,tag:"クラフトビール"},
+    {id:"d34",emoji:"🍻",name:"スプリングバレー JAPANエール 香",price:700,tag:"クラフトビール"},
+    {id:"d23",emoji:"🍺",name:"コロナエキストラ",price:600,tag:"瓶ビール"},
+    {id:"d26",emoji:"🍺",name:"スーパードライ",price:600,tag:"瓶ビール"},
+    {id:"d2",emoji:"🥃",name:"角ハイボール",price:600,tag:"ウイスキー"},
+    {id:"d3",emoji:"🥃",name:"陸ハイボール",price:650,tag:"ウイスキー"},
+    {id:"d27",emoji:"🥃",name:"ジムビームハイボール",price:600,tag:"ウイスキー"},
+    {id:"d4",emoji:"🫚",name:"ジンジャーハイボール",price:650,tag:"ウイスキー"},
+    {id:"d28",emoji:"🥃",name:"ジャックDハイボール",price:700,tag:"ウイスキー"},
+    {id:"d29",emoji:"🥃",name:"ワイルドターキーハイボール",price:650,tag:"ウイスキー"},
+    {id:"d5",emoji:"🥤",name:"コークハイ",price:650,tag:"ウイスキー"},
+    {id:"d30",emoji:"🌿",name:"翠ジン・ソーダ",price:600,tag:"スピリッツ"},
+  ]},
+  sour:{label:"🍋 サワー", items:[
+    {id:"d6",emoji:"🍋",name:"こだわり酒場のレモンサワー",price:600,tag:""},
+    {id:"d7",emoji:"🍇",name:"グレープフルーツサワー",price:600,tag:""},
+    {id:"d8",emoji:"🍍",name:"パイナップルサワー",price:600,tag:""},
+    {id:"d9",emoji:"🥛",name:"カルピスサワー",price:600,tag:""},
+    {id:"d10",emoji:"🍑",name:"男梅サワー",price:600,tag:""},
+    {id:"d11",emoji:"🍵",name:"緑茶ハイ",price:600,tag:""},
+    {id:"d24",emoji:"🍵",name:"ウーロンハイ",price:600,tag:""},
+    {id:"d25",emoji:"🥃",name:"JJ",price:600,tag:""},
+  ]},
+  shochu:{label:"🥃 焼酎", items:[
+    {id:"d12",emoji:"🌿",name:"黒霧島（芋）",price:500,tag:""},
+    {id:"d13",emoji:"🌸",name:"鍛高譚（しそ）",price:500,tag:""},
+    {id:"d14",emoji:"🌾",name:"吉四六（麦）",price:700,tag:""},
+    {id:"d15",emoji:"🍚",name:"鳥飼（米）",price:700,tag:""},
+  ]},
+  shot:{label:"🥂 ショット", items:[
+    {id:"sh1",emoji:"🍸",name:"クライナー",price:600,tag:""},
+    {id:"sh2",emoji:"🌵",name:"クエルボ",price:600,tag:""},
+    {id:"sh3",emoji:"🦌",name:"イエガー",price:800,tag:""},
+    {id:"sh4",emoji:"💣",name:"コカボム",price:1200,tag:""},
+  ]},
+  bottle:{label:"🍾 ボトル", items:[
+    {id:"b1",emoji:"🦃",name:"ワイルドターキー",price:6000,tag:"バーボン"},
+    {id:"b2",emoji:"🌾",name:"吉四六 ボトル",price:5000,tag:"麦焼酎"},
+    {id:"b3",emoji:"🍚",name:"鳥飼 ボトル",price:5000,tag:"米焼酎"},
+    {id:"b4",emoji:"🌋",name:"茜霧島",price:4000,tag:"芋焼酎"},
+    {id:"b5",emoji:"🥃",name:"角 ボトル",price:3500,tag:"ウイスキー"},
+    {id:"b6",emoji:"🌿",name:"黒霧島 ボトル",price:3500,tag:"芋焼酎"},
+    {id:"b7",emoji:"🌊",name:"いいちこ ボトル",price:3500,tag:"麦焼酎"},
+    {id:"b8",emoji:"⭐",name:"金宮 ボトル",price:2500,tag:"焼酎"},
+  ]},
+  soft:{label:"💧 割りもの", items:[
+    {id:"d16",emoji:"🧊",name:"氷",price:300,tag:""},
+    {id:"d22",emoji:"💧",name:"ミネラルウォーター",price:300,tag:""},
+    {id:"d17",emoji:"🍵",name:"緑茶",price:400,tag:""},
+    {id:"d18",emoji:"🫖",name:"紅茶",price:400,tag:""},
+    {id:"d19",emoji:"🍵",name:"烏龍茶",price:400,tag:""},
+    {id:"d20",emoji:"💧",name:"炭酸水",price:300,tag:""},
+    {id:"d21",emoji:"🌸",name:"ジャスミン茶",price:400,tag:""},
+  ]},
+  softdrink:{label:"🥤 ソフトドリンク", items:[
+    {id:"sd1",emoji:"🍵",name:"緑茶",price:400,tag:""},
+    {id:"sd2",emoji:"🫖",name:"紅茶",price:400,tag:""},
+    {id:"sd3",emoji:"🍵",name:"烏龍茶",price:400,tag:""},
+    {id:"sd4",emoji:"🌸",name:"ジャスミン茶",price:400,tag:""},
+    {id:"sd5",emoji:"🍊",name:"オレンジ",price:400,tag:""},
+    {id:"sd6",emoji:"🥤",name:"コーラ",price:400,tag:""},
+    {id:"sd7",emoji:"🥛",name:"カルピス",price:400,tag:""},
+    {id:"sd8",emoji:"🍾",name:"ジンジャエール",price:400,tag:""},
+  ]}
+};
+
+var SOLD_OUT_IDS = ["f17","f17b","f19"];
+
+// お客様側Indexと同一のハッピーアワー判定・価格ロジック
+function isHappyHour(){
+  var d = new Date();
+  var jst = new Date(d.toLocaleString("en-US",{timeZone:"Asia/Tokyo"}));
+  return jst.getHours() < 18;
+}
+var HH = isHappyHour();
+function isDrinkItem(id){ return id.startsWith("d") || id.startsWith("b"); }
+function getPrice(item){
+  var hhItems = ["d1","d2","d6"];
+  return (HH && hhItems.indexOf(item.id) !== -1) ? Math.floor(item.price * 0.5) : item.price;
+}
+
+// タブ構成：フード＋ドリンクを一列に
+var TAB_DEFS = [];
+Object.keys(FOOD_SUBS).forEach(function(k){ TAB_DEFS.push(FOOD_SUBS[k]); });
+Object.keys(DRINK_SUBS).forEach(function(k){ TAB_DEFS.push(DRINK_SUBS[k]); });
+
+var currentTable = null, currentTab = 0, cart = {};
+
+function allItems(){
+  var a = [];
+  TAB_DEFS.forEach(function(t){ a = a.concat(t.items); });
+  return a;
+}
+
+// ── テーブル選択 ─────────────────────────
+document.getElementById("tgrid").innerHTML = ["1","2","3","4","5","6"].map(function(t){
+  return '<button class="tbtn" id="tb'+t+'" onclick="selTable(\''+t+'\')">'+t+'</button>';
+}).join("");
+
+function selTable(t){
+  currentTable = t;
+  ["1","2","3","4","5","6"].forEach(function(x){
+    document.getElementById("tb"+x).className = "tbtn"+(x===t?" active":"");
+  });
+  loadInfo();
+  render();
+}
+
+function loadInfo(){
+  var el = document.getElementById("info");
+  el.className = "info show";
+  el.innerHTML = "情報取得中...";
+  fetch(GAS_WEBAPP_URL+"?action=getKaraokeInfo&table="+encodeURIComponent(currentTable))
+    .then(function(r){return r.json();})
+    .then(function(k){
+      var left = "";
+      if(k && k.success && k.startTime){
+        var e = Math.max(0, Date.now()-Number(k.startTime));
+        var h = Math.floor(e/3600000), m = Math.floor((e%3600000)/60000);
+        left = "🎤 "+(k.guests?k.guests+"名様":"人数未入力")+"／"+h+"時間"+m+"分経過";
+        el.innerHTML = '<span>'+left+'</span><button onclick="setG()">人数変更</button>';
+      } else {
+        left = "🎤 カラオケ未開始（QR未読取）";
+        el.innerHTML = '<span>'+left+'</span><span><button onclick="startK()">🎤開始</button> <button onclick="setG()">人数設定</button></span>';
+      }
+    }).catch(function(){ el.innerHTML = "情報取得エラー"; });
+}
+
+function startK(){
+  fetch(GAS_WEBAPP_URL+"?action=startKaraoke&table="+encodeURIComponent(currentTable))
+    .then(function(r){return r.json();})
+    .then(function(){ toast("カラオケ計時を開始しました"); loadInfo(); });
+}
+
+function setG(){
+  var n = prompt("人数を入力（1〜20）","2");
+  if(!n) return;
+  n = parseInt(n,10);
+  if(!(n>=1 && n<=20)){ toast("1〜20で入力してください", true); return; }
+  fetch(GAS_WEBAPP_URL+"?action=setGuests&table="+encodeURIComponent(currentTable)+"&guests="+n)
+    .then(function(r){return r.json();})
+    .then(function(){ toast(n+"名様で登録しました"); loadInfo(); });
+}
+
+// ── タブ・品目リスト ─────────────────────
+function renderTabs(){
+  document.getElementById("tabs").innerHTML = TAB_DEFS.map(function(t,i){
+    return '<button class="tab'+(i===currentTab?' active':'')+'" onclick="selTab('+i+')">'+t.label+'</button>';
+  }).join("");
+}
+function selTab(i){ currentTab = i; render(); }
+
+function render(){
+  renderTabs();
+  var items = TAB_DEFS[currentTab].items;
+  document.getElementById("list").innerHTML = items.map(function(it){
+    var sold = SOLD_OUT_IDS.indexOf(it.id) !== -1;
+    var p = getPrice(it);
+    var hh = p !== it.price;
+    var q = cart[it.id] || 0;
+    return '<div class="row'+(sold?' sold':'')+'">'
+      + '<div class="em">'+it.emoji+'</div>'
+      + '<div class="nm">'+it.name+(sold?'（売切）':'')+(it.tag?'<small>'+it.tag+'</small>':'')+'</div>'
+      + '<div class="pr'+(hh?' hh':'')+'">¥'+p.toLocaleString()+(hh?'<br><s style="color:#666">¥'+it.price+'</s>':'')+'</div>'
+      + '<div class="qc"><button onclick="chg(\''+it.id+'\',-1)">−</button>'
+      + '<span class="q'+(q>0?' on':'')+'">'+q+'</span>'
+      + '<button onclick="chg(\''+it.id+'\',1)">＋</button></div>'
+      + '</div>';
+  }).join("");
+  renderBar();
+}
+
+function chg(id, d){
+  var q = (cart[id]||0) + d;
+  if(q <= 0) delete cart[id]; else cart[id] = q;
+  render();
+}
+
+function clearCart(){ cart = {}; render(); }
+
+function renderBar(){
+  var all = allItems(), n = 0, sub = 0;
+  Object.entries(cart).forEach(function(e){
+    var it = all.find(function(x){return x.id===e[0];});
+    n += e[1]; sub += getPrice(it)*e[1];
+  });
+  var tax = Math.floor(sub*0.1);
+  document.getElementById("cnt").textContent = n+"点（税込）";
+  document.getElementById("tot").textContent = "¥"+(sub+tax).toLocaleString();
+  document.getElementById("send").disabled = !(n>0 && currentTable);
+}
+
+// ── 送信（お客様側submitOrderと同一形式） ─────
+function submitOrder(){
+  if(!currentTable){ toast("テーブルを選択してください", true); return; }
+  var btn = document.getElementById("send");
+  btn.disabled = true; btn.textContent = "送信中...";
+  var all = allItems();
+  var items = Object.entries(cart).map(function(e){
+    var item = all.find(function(x){return x.id===e[0];});
+    var p = getPrice(item);
+    return {name:item.name+(HH&&isDrinkItem(item.id)&&!item.id.startsWith("b")&&item.id!=="d16"&&item.id!=="d17"?" [HH]":""),emoji:item.emoji,price:p,qty:e[1],cat:(item.id.startsWith("f")?"food":"drink")};
+  });
+  var subtotal = items.reduce(function(s,x){return s+x.price*x.qty;}, 0);
+  var tax = Math.floor(subtotal * 0.1);
+  var total = subtotal + tax;
+  var payload = {tableNo:currentTable, items:items, subtotal:subtotal, tax:tax, total:total};
+  fetch(GAS_WEBAPP_URL + "?action=submitOrder&data=" + encodeURIComponent(JSON.stringify(payload)))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success){
+        toast("テーブル"+currentTable+"に送信しました（¥"+total.toLocaleString()+"）");
+        cart = {};
+        render();
+      } else {
+        toast("送信失敗: "+(res&&res.error||"不明なエラー"), true);
+      }
+    })
+    .catch(function(e){ toast("通信エラー: "+e, true); })
+    .finally(function(){ btn.textContent = "送信"; renderBar(); });
+}
+
+var toastTimer = null;
+function toast(msg, isErr){
+  var el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "toast"+(isErr?" err":"");
+  el.style.display = "block";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ el.style.display="none"; }, 2600);
+}
+
+renderTabs(); render();
+</script>
+</body>
+</html>
