@@ -466,7 +466,20 @@ function renderFood(sub){
   document.getElementById("menu-food").innerHTML = '<div class="sub-tabs">'+tabs+'</div><div class="menu-grid">'+items+'</div>';
 }
 
-var SOLD_OUT_IDS = ["f17","f17b","f19"];
+var SOLD_OUT_IDS = ["f17","f17b","f19"];  // 初期値（起動時にGASから最新を取得して上書き）
+
+// 売り切れ情報をサーバーから取得して反映（スタッフページから変更可能）
+function loadSoldOut(){
+  fetch(GAS_WEBAPP_URL + "?action=getSoldOut")
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success && res.ids){
+        SOLD_OUT_IDS = res.ids;
+        renderDrink(); renderFood();
+      }
+    }).catch(function(){ /* 取得失敗時は初期値のまま */ });
+}
+loadSoldOut();
 
 function renderItem(item){
   var qty = cart[item.id] || 0;
