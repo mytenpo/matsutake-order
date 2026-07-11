@@ -40,14 +40,19 @@ body{background:#07070f;min-height:100vh;font-family:'Hiragino Sans','Noto Sans 
 .clear{padding:13px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:transparent;color:#888;font-size:14px;cursor:pointer;font-family:inherit}
 .toast{position:fixed;top:64px;left:50%;transform:translateX(-50%);background:#12b76a;color:#fff;font-size:15px;font-weight:700;padding:12px 20px;border-radius:12px;z-index:200;display:none;box-shadow:0 6px 24px rgba(0,0,0,.5)}
 .toast.err{background:#e5484d}
+.mng{width:100%;margin-top:8px;padding:9px;border-radius:10px;border:1px dashed rgba(255,209,102,.5);background:transparent;color:#ffd166;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit}
+.mng.on{background:rgba(255,209,102,.15);border-style:solid}
+.sob{padding:8px 12px;border-radius:9px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.06);color:#ffd166;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap}
+.sob.sold{background:rgba(229,72,77,.2);border-color:#e5484d;color:#ff8a8e}
 .hint{color:#666;font-size:12px;text-align:center;margin-top:10px}
 </style>
 </head>
 <body>
-<div class="hdr"><b>🍄 MATUTAKE スタッフ注文</b><small>口頭オーダー入力 v1</small></div>
+<div class="hdr"><b>🍄 MATUTAKE スタッフ注文</b><small>口頭オーダー入力 v3</small></div>
 <div class="wrap">
   <div class="tgrid" id="tgrid"></div>
   <div class="info" id="info"></div>
+  <button class="mng" id="mng" onclick="toggleManage()">🚫 売切管理モード</button>
   <div class="tabs" id="tabs"></div>
   <div id="list"></div>
   <div class="hint">💡 テーブル選択 → 品目の＋ → 下の送信。キッチン・会計にお客様注文と同じ形で反映されます。</div>
@@ -175,12 +180,64 @@ function getPrice(item){
   return (HH && hhItems.indexOf(item.id) !== -1) ? Math.floor(item.price * 0.5) : item.price;
 }
 
-// タブ構成：フード＋ドリンクを一列に
-var TAB_DEFS = [];
+// 本日のおすすめ（手書きボードの品を価格帯で注文。idは f始まり=フード扱いでキッチンに流れる）
+var RECO_SUB = {label:"⭐ 本日のおすすめ", items:[
+  {id:"fr380",emoji:"⭐",name:"本日のおすすめ ¥380",price:380,tag:"手書きボードの品"},
+  {id:"fr480",emoji:"⭐",name:"本日のおすすめ ¥480",price:480,tag:"手書きボードの品"},
+  {id:"fr580",emoji:"⭐",name:"本日のおすすめ ¥580",price:580,tag:"手書きボードの品"},
+  {id:"fr680",emoji:"⭐",name:"本日のおすすめ ¥680",price:680,tag:"手書きボードの品"},
+  {id:"fr780",emoji:"⭐",name:"本日のおすすめ ¥780",price:780,tag:"手書きボードの品"},
+  {id:"fr880",emoji:"⭐",name:"本日のおすすめ ¥880",price:880,tag:"手書きボードの品"},
+]};
+
+// タブ構成：おすすめ＋フード＋ドリンクを一列に
+var TAB_DEFS = [RECO_SUB];
 Object.keys(FOOD_SUBS).forEach(function(k){ TAB_DEFS.push(FOOD_SUBS[k]); });
 Object.keys(DRINK_SUBS).forEach(function(k){ TAB_DEFS.push(DRINK_SUBS[k]); });
 
+// おすすめ品の品名メモ（キッチン表示用・任意）
+var memos = {};
+function setMemo(id){
+  var cur = memos[id] || "";
+  var t = prompt("品名メモ（キッチンのレシート・画面に表示されます）\n例：アジフライ、もつ煮込み", cur);
+  if(t === null) return;
+  t = t.trim();
+  if(t) memos[id] = t; else delete memos[id];
+  render();
+}
+
 var currentTable = null, currentTab = 0, cart = {};
+var manageMode = false;
+
+// 売り切れ情報をサーバーから取得
+function loadSoldOut(){
+  fetch(GAS_WEBAPP_URL + "?action=getSoldOut")
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success && res.ids){ SOLD_OUT_IDS = res.ids; render(); }
+    }).catch(function(){});
+}
+
+function toggleManage(){
+  manageMode = !manageMode;
+  document.getElementById("mng").className = manageMode ? "mng on" : "mng";
+  render();
+}
+
+function toggleSold(id){
+  var isSold = SOLD_OUT_IDS.indexOf(id) !== -1;
+  fetch(GAS_WEBAPP_URL + "?action=setSoldOut&id=" + encodeURIComponent(id) + "&sold=" + (isSold ? "0" : "1"))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success){
+        SOLD_OUT_IDS = res.ids;
+        toast(isSold ? "販売中に戻しました" : "売り切れにしました");
+        render();
+      } else {
+        toast("更新失敗", true);
+      }
+    }).catch(function(){ toast("通信エラー", true); });
+}
 
 function allItems(){
   var a = [];
@@ -254,13 +311,22 @@ function render(){
     var p = getPrice(it);
     var hh = p !== it.price;
     var q = cart[it.id] || 0;
-    return '<div class="row'+(sold?' sold':'')+'">'
+    var right;
+    if(manageMode){
+      right = '<button class="sob'+(sold?' sold':'')+'" onclick="toggleSold(\''+it.id+'\')">'+(sold?'売切中→戻す':'売切にする')+'</button>';
+    } else {
+      right = '<div class="qc"><button onclick="chg(\''+it.id+'\',-1)">−</button>'
+        + '<span class="q'+(q>0?' on':'')+'">'+q+'</span>'
+        + '<button onclick="chg(\''+it.id+'\',1)">＋</button></div>';
+    }
+    var isReco = it.id.indexOf("fr") === 0;
+    var memoHtml = isReco ? '<small style="color:'+(memos[it.id]?'#ffd166':'#555')+'">✎ '+(memos[it.id]||'メモなし（タップで入力）')+'</small>' : (it.tag?'<small>'+it.tag+'</small>':'');
+    var nmAttr = isReco && !manageMode ? ' onclick="setMemo(\''+it.id+'\')" style="cursor:pointer"' : '';
+    return '<div class="row'+(sold && !manageMode ?' sold':'')+'">'
       + '<div class="em">'+it.emoji+'</div>'
-      + '<div class="nm">'+it.name+(sold?'（売切）':'')+(it.tag?'<small>'+it.tag+'</small>':'')+'</div>'
+      + '<div class="nm"'+nmAttr+'>'+it.name+(sold?'（売切）':'')+memoHtml+'</div>'
       + '<div class="pr'+(hh?' hh':'')+'">¥'+p.toLocaleString()+(hh?'<br><s style="color:#666">¥'+it.price+'</s>':'')+'</div>'
-      + '<div class="qc"><button onclick="chg(\''+it.id+'\',-1)">−</button>'
-      + '<span class="q'+(q>0?' on':'')+'">'+q+'</span>'
-      + '<button onclick="chg(\''+it.id+'\',1)">＋</button></div>'
+      + right
       + '</div>';
   }).join("");
   renderBar();
@@ -295,7 +361,10 @@ function submitOrder(){
   var items = Object.entries(cart).map(function(e){
     var item = all.find(function(x){return x.id===e[0];});
     var p = getPrice(item);
-    return {name:item.name+(HH&&isDrinkItem(item.id)&&!item.id.startsWith("b")&&item.id!=="d16"&&item.id!=="d17"?" [HH]":""),emoji:item.emoji,price:p,qty:e[1],cat:(item.id.startsWith("f")?"food":"drink")};
+    var nm = item.name;
+    if(item.id.indexOf("fr") === 0 && memos[item.id]) nm += "（"+memos[item.id]+"）";
+    if(HH&&isDrinkItem(item.id)&&!item.id.startsWith("b")&&item.id!=="d16"&&item.id!=="d17") nm += " [HH]";
+    return {name:nm,emoji:item.emoji,price:p,qty:e[1],cat:(item.id.startsWith("f")?"food":"drink")};
   });
   var subtotal = items.reduce(function(s,x){return s+x.price*x.qty;}, 0);
   var tax = Math.floor(subtotal * 0.1);
@@ -306,7 +375,7 @@ function submitOrder(){
     .then(function(res){
       if(res && res.success){
         toast("テーブル"+currentTable+"に送信しました（¥"+total.toLocaleString()+"）");
-        cart = {};
+        cart = {}; memos = {};
         render();
       } else {
         toast("送信失敗: "+(res&&res.error||"不明なエラー"), true);
@@ -326,7 +395,7 @@ function toast(msg, isErr){
   toastTimer = setTimeout(function(){ el.style.display="none"; }, 2600);
 }
 
-renderTabs(); render();
+renderTabs(); render(); loadSoldOut();
 </script>
 </body>
 </html>
