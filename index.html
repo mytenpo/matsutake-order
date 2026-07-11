@@ -376,18 +376,22 @@ function calcKaraCharge(){
 
 function fetchKaraStart(){
   if(!TABLE_NO) return;
-  // ページを開いた時点でGASに開始時刻を登録（初回のみ記録、以降は既存の時刻を返す）
-  fetch(GAS_WEBAPP_URL + "?action=startKaraoke&table=" + encodeURIComponent(TABLE_NO))
+  // 読み取り専用で状態確認のみ。計時はまだ開始しない（誤スキャン対策）
+  // 実際の計時開始は「人数ボタンを押した瞬間」（selectGuests内）
+  fetch(GAS_WEBAPP_URL + "?action=getKaraokeInfo&table=" + encodeURIComponent(TABLE_NO))
     .then(function(r){ return r.json(); })
     .then(function(res){
-      if(res && res.success && res.startTime){
+      if(!res || !res.success) return;
+      if(res.startTime){
         karaStart = Number(res.startTime);
         if(res.guests){
           karaGuests = Number(res.guests);   // 同じテーブルの2台目以降はモーダル不要
+          updateKaraUI();
         } else {
-          openGuestsModal();                 // 初回のみ「何名様ですか？」を表示
+          openGuestsModal();                 // 開始済みだが人数未入力（スタッフ開始など）
         }
-        updateKaraUI();
+      } else {
+        openGuestsModal();                   // 未開始：人数選択と同時に計時開始する
       }
     })
     .catch(function(){});
@@ -402,9 +406,14 @@ function openGuestsModal(){
 function selectGuests(n){
   var btns = document.querySelectorAll(".guests-btn");
   for(var i=0;i<btns.length;i++){ btns[i].disabled = true; }
-  fetch(GAS_WEBAPP_URL + "?action=setGuests&table=" + encodeURIComponent(TABLE_NO) + "&guests=" + n)
-    .then(function(r){ return r.json(); })
-    .then(function(res){
+  // 人数ボタンを押した瞬間に計時開始＋人数登録（誤スキャンでは何も記録されない）
+  Promise.all([
+    fetch(GAS_WEBAPP_URL + "?action=startKaraoke&table=" + encodeURIComponent(TABLE_NO)).then(function(r){ return r.json(); }),
+    fetch(GAS_WEBAPP_URL + "?action=setGuests&table=" + encodeURIComponent(TABLE_NO) + "&guests=" + n).then(function(r){ return r.json(); })
+  ])
+    .then(function(rs){
+      var st = rs[0], res = rs[1];
+      if(st && st.success && st.startTime){ karaStart = Number(st.startTime); }
       if(res && res.success){
         karaGuests = Number(res.guests);
         document.getElementById("guests-overlay").style.display = "none";
