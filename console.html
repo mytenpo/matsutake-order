@@ -127,7 +127,7 @@
   </style>
 </head>
 <body>
-  <div class="header">🎤 MATUTAKE コンソール <span style="font-size:13px;opacity:.6;">v2</span>
+  <div class="header">🎤 MATUTAKE コンソール <span style="font-size:13px;opacity:.6;">v3</span>
     <div class="nav">
       <button class="nav-btn active" id="nav-kitchen" onclick="showView('kitchen')">🍳 キッチン</button>
       <button class="nav-btn" id="nav-checkout" onclick="showView('checkout')">💴 会計</button>
@@ -186,6 +186,7 @@
           <button class="co-drawer" onclick="openDrawer()">💰 ドロワーのみ開く</button>
           <button class="co-done" id="co-done" onclick="doCheckout()">✅ 会計完了</button>
         </div>
+        <button class="co-reload" onclick="resetVisit()" style="color:#ff8a8e;border-color:rgba(229,72,77,.4)">🗑 来店取消（誤スキャン等・回転は進めない）</button>
         <button class="co-reload" onclick="loadBill()">🔄 再読み込み</button>
         <button class="co-reload" onclick="printTest()" style="color:#666">🧪 テスト印刷（3行・切り分け用）</button>
       </div>
@@ -692,6 +693,28 @@ function doCheckout(){
     })
     .catch(function(e){ alert("通信エラー: "+e); })
     .finally(function(){ btn.disabled=false; btn.textContent="✅ 会計完了"; });
+}
+
+// ── 来店取消（誤スキャンなどで実際には不在のとき） ──
+function resetVisit(){
+  if(!coTable || !coBill){ alert("先にテーブルを選択してください"); return; }
+  // 注文がある卓は誤操作防止のためブロック（実来店の可能性が高い）
+  if(coBill.orders.length > 0){
+    alert("このテーブルには注文が入っています。\n来店取消は使えません。\n・実来店なら「✅会計完了」で締めてください\n・誤注文ならキッチンタブでキャンセルしてから再度お試しください");
+    return;
+  }
+  if(!confirm("テーブル"+coTable+" の来店記録を取り消しますか？\n（カラオケ計時・人数を消去します。回転数は進みません）")) return;
+  fetch(GAS_WEBAPP_URL+"?action=resetVisit&table="+encodeURIComponent(coTable))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success){
+        alert("テーブル"+coTable+" の来店記録を取り消しました");
+        loadBill();
+      } else {
+        alert("取消に失敗しました: "+(res&&res.error||"不明なエラー"));
+      }
+    })
+    .catch(function(e){ alert("通信エラー: "+e); });
 }
 
 </script>
