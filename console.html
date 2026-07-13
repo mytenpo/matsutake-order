@@ -123,14 +123,23 @@
   .co-reload{ width:100%; padding:9px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:transparent; color:#888; font-size:13px; cursor:pointer; font-family:inherit; margin-top:7px; }
   .co-empty{ color:#666; text-align:center; padding:22px 0; font-size:15px; }
   .co-empty.err{ color:#ff6b6b; }
+  .sh-card{ background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:13px; padding:12px 14px; margin-top:10px; display:flex; align-items:center; gap:10px; }
+  .sh-name{ font-size:19px; font-weight:800; width:110px; }
+  .sh-times{ flex:1; font-size:13.5px; color:#aaa; line-height:1.6; }
+  .sh-times b{ color:#fff; font-size:15px; }
+  .sh-btn{ padding:12px 16px; border-radius:11px; border:none; font-size:15px; font-weight:800; cursor:pointer; font-family:inherit; }
+  .sh-in{ background:#12b76a; color:#fff; }
+  .sh-out{ background:#e5484d; color:#fff; }
+  .sh-btn:disabled{ opacity:.35; }
 
   </style>
 </head>
 <body>
-  <div class="header">🎤 MATUTAKE コンソール <span style="font-size:13px;opacity:.6;">v3</span>
+  <div class="header">🎤 MATUTAKE コンソール <span style="font-size:13px;opacity:.6;">v5</span>
     <div class="nav">
       <button class="nav-btn active" id="nav-kitchen" onclick="showView('kitchen')">🍳 キッチン</button>
       <button class="nav-btn" id="nav-checkout" onclick="showView('checkout')">💴 会計</button>
+      <button class="nav-btn" id="nav-shift" onclick="showView('shift')">👥 勤怠</button>
     </div>
   </div>
   <div id="view-kitchen">
@@ -170,6 +179,9 @@
           <button class="co-pbtn" id="pay-QR" onclick="selPay('QR')">📱 QR</button>
         </div>
 
+        <div class="co-sec" style="margin-top:12px">担当者</div>
+        <div class="co-pgrid" id="co-staff-grid"></div>
+
         <div id="co-cash" style="display:none;">
           <div class="co-sec" style="margin-top:12px">お預り金額</div>
           <div class="co-qgrid">
@@ -193,6 +205,16 @@
       <div class="co-empty" id="co-msg">テーブルを選択してください</div>
     </div>
   </div><!-- /view-checkout -->
+
+  <!-- ═══════════ 勤怠ビュー ═══════════ -->
+  <div id="view-shift" style="display:none;">
+    <div class="co-wrap">
+      <div class="co-sec">本日の出勤・退勤（タップで打刻）</div>
+      <div id="shift-list"></div>
+      <button class="co-reload" onclick="loadShifts()">🔄 再読み込み</button>
+      <div class="co-empty" style="padding:10px 0;font-size:12px">記録はスプレッドシートの「勤怠」シートに保存されます</div>
+    </div>
+  </div><!-- /view-shift -->
 
 <script>
 var enabled = false;
@@ -487,19 +509,92 @@ setInterval(function(){ if(enabled) renderTables(); }, 60000);
 function showView(v){
   document.getElementById("view-kitchen").style.display  = (v==="kitchen")  ? "" : "none";
   document.getElementById("view-checkout").style.display = (v==="checkout") ? "" : "none";
+  document.getElementById("view-shift").style.display    = (v==="shift")    ? "" : "none";
   document.getElementById("nav-kitchen").className  = "nav-btn"+(v==="kitchen"?" active":"");
   document.getElementById("nav-checkout").className = "nav-btn"+(v==="checkout"?" active":"");
-  // 会計ビューを開いてもポーリング・受信音は継続する（同一ページのため）
+  document.getElementById("nav-shift").className    = "nav-btn"+(v==="shift"?" active":"");
+  if(v==="shift") loadShifts();
+  // 他ビューを開いてもポーリング・受信音は継続する（同一ページのため）
+}
+
+// ═══════════════════ 勤怠ビュー ═══════════════════
+var shiftsToday = [];
+
+function loadShifts(){
+  fetch(GAS_WEBAPP_URL+"?action=getTodayShifts")
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success){ shiftsToday = res.shifts || []; renderShifts(); }
+    })
+    .catch(function(){ document.getElementById("shift-list").innerHTML = '<div class="co-empty err">通信エラー</div>'; });
+}
+
+function shiftStateOf(name){
+  // その人の本日最新の状態（未退勤の出勤があるか）
+  var tin = "", tout = "", working = false;
+  for(var i=0;i<shiftsToday.length;i++){
+    var s = shiftsToday[i];
+    if(s.name === name){
+      tin = s.tin || tin; tout = s.tout || tout;
+      working = !!s.tin && !s.tout;
+    }
+  }
+  return { tin:tin, tout:tout, working:working };
+}
+
+function renderShifts(){
+  document.getElementById("shift-list").innerHTML = STAFF_NAMES.map(function(n){
+    var st = shiftStateOf(n);
+    var times = '出勤 <b>'+(st.tin||"--:--")+'</b>　退勤 <b>'+(st.tout||"--:--")+'</b>'
+              + (st.working ? '　<span style="color:#4ade80">勤務中</span>' : '');
+    return '<div class="sh-card">'
+      + '<div class="sh-name">'+n+'</div>'
+      + '<div class="sh-times">'+times+'</div>'
+      + '<button class="sh-btn sh-in" onclick="punch(\''+n+'\',\'in\')" '+(st.working?'disabled':'')+'>出勤</button>'
+      + '<button class="sh-btn sh-out" onclick="punch(\''+n+'\',\'out\')" '+(st.working?'':'disabled')+'>退勤</button>'
+      + '</div>';
+  }).join("");
+}
+
+function punch(name, type){
+  var label = (type==="in" ? "出勤" : "退勤");
+  if(!confirm(name+"さんの"+label+"を記録しますか？")) return;
+  fetch(GAS_WEBAPP_URL+"?action=punchClock&name="+encodeURIComponent(name)+"&type="+type)
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success){
+        alert(name+"さん "+label+" "+res.time+" を記録しました"+(res.note?"（"+res.note+"）":""));
+        loadShifts();
+      } else {
+        alert("記録に失敗しました: "+(res&&res.error||"不明なエラー"));
+      }
+    })
+    .catch(function(e){ alert("通信エラー: "+e); });
 }
 
 // ═══════════════════ 会計ビュー ═══════════════════
 var STORE_NAME = "カラオケ♪酒場 マツタケ";
-var coTable = null, coBill = null, coPay = null;
+
+// ★担当者リスト（ここを編集すればボタンが増減します）
+var STAFF_NAMES = ["マミ", "ハナ", "トモナガ", "オーナー"];
+
+var coTable = null, coBill = null, coPay = null, coStaff = null;
+
+document.addEventListener("DOMContentLoaded", function(){});
+function renderStaffGrid(){
+  var g = document.getElementById("co-staff-grid");
+  g.style.gridTemplateColumns = "repeat(" + Math.min(STAFF_NAMES.length, 4) + ",1fr)";
+  g.innerHTML = STAFF_NAMES.map(function(s){
+    return '<button class="co-pbtn'+(coStaff===s?' active':'')+'" onclick="selStaff(\''+s+'\')">'+s+'</button>';
+  }).join("");
+}
+function selStaff(s){ coStaff = (coStaff===s) ? null : s; renderStaffGrid(); }
 
 var CO_TABLES = ["1","2","3","4","5","6","C1","C2","C3","C4","C5","C6"];
 document.getElementById("co-tgrid").innerHTML = CO_TABLES.map(function(t){
   return '<button class="co-tbtn" id="co-tb'+t+'" onclick="coSelTable(\''+t+'\')">'+t+'</button>';
 }).join("");
+renderStaffGrid();
 
 function coSelTable(t){
   coTable = t;
@@ -507,6 +602,7 @@ function coSelTable(t){
     document.getElementById("co-tb"+x).className = "co-tbtn"+(x===t?" active":"");
   });
   coPay = null; renderPay();
+  coStaff = null; renderStaffGrid();
   document.getElementById("co-tender").value = "";
   document.getElementById("co-change").textContent = "";
   loadBill();
@@ -607,6 +703,7 @@ function buildReceiptHTML(){
   var innerTax = Math.floor(b.grand * 10 / 110);
   var payRows = "";
   if(coPay){ payRows += '<tr><td>お支払方法</td><td class="r">'+esc2(coPay)+'</td></tr>'; }
+  if(coStaff){ payRows += '<tr><td>担当</td><td class="r">'+esc2(coStaff)+'</td></tr>'; }
   if(coPay==="現金"){
     var t = parseInt(document.getElementById("co-tender").value,10);
     if(t && t >= b.grand){
@@ -674,16 +771,18 @@ function printTest(){
 // ── 会計完了 ──
 function doCheckout(){
   if(!coTable || !coBill){ alert("先にテーブルを選択してください"); return; }
-  var payLabel = coPay || "未選択";
-  if(!confirm("テーブル"+coTable+" を会計完了にしますか？\n合計 ¥"+coBill.grand.toLocaleString()+"（"+payLabel+"）\n※回転が進み、チャージ・人数はリセットされます")) return;
+  var payLabel = (coPay || "支払方法未選択") + (coStaff ? "／担当: "+coStaff : "／担当未選択");
+  if(!confirm("テーブル"+coTable+" を会計完了にしますか？\n合計 ¥"+coBill.grand.toLocaleString()+"\n"+payLabel+"\n※回転が進み、チャージ・人数はリセットされます")) return;
   var btn = document.getElementById("co-done");
   btn.disabled = true; btn.textContent = "処理中...";
-  fetch(GAS_WEBAPP_URL+"?action=checkoutTable&table="+encodeURIComponent(coTable)+"&pay="+encodeURIComponent(coPay||""))
+    var payRecord = (coPay||"") + (coStaff ? (coPay?"・":"") + coStaff : "");
+  fetch(GAS_WEBAPP_URL+"?action=checkoutTable&table="+encodeURIComponent(coTable)+"&pay="+encodeURIComponent(payRecord))
     .then(function(r){ return r.json(); })
     .then(function(res){
       if(res && res.success){
         alert("テーブル"+coTable+" の会計を完了しました");
         coPay = null; renderPay();
+        coStaff = null; renderStaffGrid();
         document.getElementById("co-cash").style.display = "none";
         document.getElementById("co-tender").value = "";
         loadBill();
