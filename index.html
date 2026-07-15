@@ -1,722 +1,1197 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<title>🎤 MATUTAKE コンソール</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  body{
-    margin:0; padding:0; font-family:sans-serif; background:#07070f; color:#fff;
+// ============================================================
+//  MATSUTAKE フード＆ドリンクオーダーフォーム
+//  Code_32.gs （Google Apps Script サーバーサイド）
+//  ※シートは日付ごとに自動生成（例: 2026-07-05）
+//  ※テーブルごとに見出し行（緑）＋交互帯（白/薄ピンク）で整理
+//  ※テーブル小計は「来店回」ごとに分離（会計済みにすると自動で次回来店扱いに）
+// ============================================================
+
+var CONFIG = {
+  SHEET_ID    : "19ROiRl5vrU2k0VK6TqHFpetCtxNX0REONJbAb2ybkbY",
+  NOTIFY_EMAIL: ""   // 通知メールアドレス（任意）
+};
+
+var ORDER_HEADERS = ["日時", "テーブル", "品目", "数量", "小計(税込)", "ステータス", "完了時刻", "回転数"];
+var COL_TIME=1, COL_TABLE=2, COL_ITEM=3, COL_QTY=4, COL_SUBTOTAL=5, COL_STATUS=6, COL_DONE_TIME=7, COL_VISIT=8;
+
+var TITLE_TAG = "TITLE"; // ステータス列にこの値が入っている行はテーブル見出し行
+
+var TITLE_BG = "#2E7D32";      // テーブル見出し行（緑）
+var TITLE_FG = "#FFFFFF";
+var TABLE_BAND_COLORS = ["#FFFFFF", "#FDEEF3"]; // 注文行の交互背景色（白／薄ピンク）
+var PAID_BG = "#E0E0E0", PAID_FG = "#888888";   // 会計済み小計行のグレーアウト
+
+var SUB_LABEL   = "テーブル小計(税込)";
+var TOTAL_LABEL = "本日合計(税込)";
+
+var ORDER_STATUS_OPTIONS   = ["未対応", "対応済み", "キャンセル"];
+var BILLING_STATUS_OPTIONS = ["ご来店中", "お会計済み"];
+var BILLING_STATUS_DEFAULT = "ご来店中";
+var BILLING_STATUS_PAID    = "お会計済み";
+
+// ── 今日の日付名のシートを取得（無ければ新規作成） ──────────────
+function getTodaySheet_() {
+  var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  var todayName = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var sheet = ss.getSheetByName(todayName);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(todayName, 0); // 先頭タブに追加
+    sheet.appendRow(ORDER_HEADERS);
+    var hr = sheet.getRange(1, 1, 1, ORDER_HEADERS.length);
+    hr.setBackground("#C41E5A");
+    hr.setFontColor("#FFFFFF");
+    hr.setFontWeight("bold");
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidths(1, ORDER_HEADERS.length, 130);
+    sheet.setColumnWidth(COL_ITEM, 300);
+    sheet.setColumnWidth(COL_TABLE, 70);
+    sheet.setColumnWidth(COL_QTY, 70);
+    sheet.setColumnWidth(COL_SUBTOTAL, 70);
+    sheet.getRange("B:B").setHorizontalAlignment("center");
+    sheet.getRange("D:D").setHorizontalAlignment("center");
+    sheet.getRange("E:E").setHorizontalAlignment("center");
+    sheet.getRange("E:E").setNumberFormat("#,##0");
+    sheet.getRange("A:A").setNumberFormat("@");
+    sheet.getRange("G:G").setNumberFormat("@");
+    sheet.getDataRange().setFontSize(11);
+    sheet.setRowHeights(1, 200, 45);
   }
-  .header{
-    width:100%; padding:14px 20px; text-align:center; background:#C41E5A;
-    font-size:24px; font-weight:900; box-sizing:border-box;
-  }
-  .status{ margin:8px 12px; font-size:15px; text-align:center; color:#aaa; }
-  .enable-wrap{ text-align:center; }
-  .enable-btn{
-    margin-top:30px; padding:20px 40px; font-size:24px; font-weight:700;
-    border-radius:12px; border:none; background:#ff2d78; color:#fff; cursor:pointer;
-  }
-
-  /* ── 3カラムレイアウト ─────────────────────────── */
-  .dash{
-    display:grid; grid-template-columns:1fr 1.4fr 1fr; gap:10px;
-    padding:10px; box-sizing:border-box; align-items:start;
-  }
-  @media (max-width:900px){
-    .dash{ grid-template-columns:1fr; }
-    .col-feed{ order:-1; }
-  }
-  .col{ display:flex; flex-direction:column; gap:10px; }
-
-  /* ── テーブルサマリーパネル ────────────────────── */
-  .tpanel{
-    background:#12121e; border-radius:12px; padding:12px 14px;
-    border:1px solid rgba(255,255,255,.08);
-  }
-  .tpanel.active{ border-color:rgba(255,45,120,.45); }
-  .tpanel-head{ display:flex; justify-content:space-between; align-items:center; }
-  .tpanel-title{ font-size:19px; font-weight:900; color:#ff9ec2; }
-  .tpanel-visit{ font-size:12px; color:#888; }
-  .tpanel-row{ display:flex; justify-content:space-between; font-size:14px; margin-top:6px; color:#ccc; }
-  .tpanel-row .val{ color:#fff; font-weight:700; }
-  .tpanel-items{ font-size:13px; color:#9ad; margin-top:6px; line-height:1.5; word-break:break-all; }
-  .tpanel-total{
-    display:flex; justify-content:space-between; margin-top:8px; padding-top:8px;
-    border-top:1px dashed rgba(255,255,255,.15); font-size:16px; font-weight:900; color:#ffd34d;
-  }
-  .guests-adjust{ display:flex; align-items:center; gap:8px; }
-  .gbtn{
-    width:30px; height:30px; border-radius:8px; border:1px solid rgba(255,255,255,.2);
-    background:rgba(255,255,255,.06); color:#fff; font-size:17px; font-weight:900; cursor:pointer;
-  }
-  .gbtn:disabled{ opacity:.4; }
-  .gval{ min-width:44px; text-align:center; font-size:15px; font-weight:700; }
-  .empty-note{ font-size:13px; color:#666; margin-top:6px; }
-
-  /* ── 中央：注文フィード ────────────────────────── */
-  .feed-title{ font-size:16px; font-weight:900; color:#aaa; padding:2px 4px; }
-  .order-card{
-    background:#15151f; border-radius:10px; padding:12px 14px;
-    border-left:6px solid #ff2d78;
-  }
-  .order-top{ display:flex; justify-content:space-between; align-items:center; }
-  .order-card.new{ animation:flash 1.2s ease-in-out 3; }
-  @keyframes flash{
-    0%,100%{ background:#15151f; }
-    50%{ background:#4a1030; }
-  }
-  .tbadge{
-    display:inline-block; min-width:56px; text-align:center;
-    background:#ff2d78; color:#fff; font-size:22px; font-weight:900;
-    padding:6px 8px; border-radius:10px; margin-right:10px; vertical-align:middle;
-  }
-  .order-name{ font-size:17px; font-weight:700; display:inline; vertical-align:middle; }
-  .order-meta{ font-size:13px; color:#999; margin-top:4px; }
-  .order-time{ font-size:15px; color:#ff9ec2; white-space:nowrap; }
-  .status-btns{ display:flex; gap:8px; margin-top:10px; }
-  .status-btn{
-    flex:1; padding:9px 4px; border-radius:8px; border:1px solid rgba(255,255,255,.15);
-    background:rgba(255,255,255,.05); color:#aaa; font-size:13px; font-weight:700;
-    cursor:pointer; font-family:inherit;
-  }
-  .status-btn:disabled{ opacity:.5; }
-  .status-btn.status-pending.active{ background:rgba(255,180,0,.18); color:#ffb400; border-color:rgba(255,180,0,.4); }
-  .status-btn.status-done.active{ background:rgba(16,185,129,.18); color:#10b981; border-color:rgba(16,185,129,.4); }
-  .status-btn.status-cancel.active{ background:rgba(255,45,120,.18); color:#ff2d78; border-color:rgba(255,45,120,.4); }
-
-  /* ── コンソールナビ ── */
-  .nav{ margin-top:8px; display:flex; justify-content:center; gap:8px; }
-  .nav-btn{ padding:8px 22px; border-radius:20px; border:1px solid rgba(255,255,255,.35); background:transparent; color:#fff; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; opacity:.65; }
-  .nav-btn.active{ background:#fff; color:#C41E5A; opacity:1; }
-
-  /* ── 会計ビュー ── */
-  .co-wrap{ max-width:560px; margin:0 auto; padding:14px 16px 40px; }
-  .co-sec{ font-size:14px; color:#999; margin:10px 0 6px; font-weight:600; }
-  .co-tgrid{ display:grid; grid-template-columns:repeat(6,1fr); gap:7px; }
-  .co-tbtn{ padding:14px 0; border-radius:11px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.05); color:#fff; font-size:16px; font-weight:800; cursor:pointer; font-family:inherit; }
-  .co-tbtn.active{ border-color:#ff2d78; background:rgba(255,45,120,.16); color:#ff6ba0; }
-  .co-bill{ background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding:14px; margin-top:14px; display:none; }
-  .co-bill.show{ display:block; }
-  .co-bill-table{ font-size:19px; font-weight:800; color:#00d4ff; text-align:center; margin-bottom:8px; }
-  .co-item{ display:flex; justify-content:space-between; font-size:14.5px; padding:4px 0; border-bottom:1px dashed rgba(255,255,255,.08); }
-  .co-item .nm{ flex:1; }
-  .co-item .qt{ width:46px; text-align:center; color:#888; }
-  .co-item .am{ width:78px; text-align:right; }
-  .co-item.cancelled{ opacity:.35; text-decoration:line-through; }
-  .co-sum{ display:flex; justify-content:space-between; font-size:14.5px; padding:5px 0; color:#bbb; }
-  .co-sum.co-grand{ font-size:22px; font-weight:800; color:#ff2d78; border-top:1px solid rgba(255,255,255,.15); margin-top:5px; padding-top:9px; }
-  .co-kara-note{ font-size:12px; color:#777; text-align:right; }
-  .co-pgrid{ display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
-  .co-pbtn{ padding:13px 0; border-radius:11px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.05); color:#fff; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; }
-  .co-pbtn.active{ border-color:#12b76a; background:rgba(18,183,106,.18); color:#4ade80; }
-  .co-qgrid{ display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin-bottom:7px; }
-  .co-qbtn{ padding:10px 0; border-radius:10px; border:1px solid rgba(255,255,255,.15); background:transparent; color:#ccc; font-size:14px; cursor:pointer; font-family:inherit; }
-  .co-tender{ width:100%; padding:12px; border-radius:11px; border:1px solid rgba(255,255,255,.2); background:rgba(0,0,0,.3); color:#fff; font-size:22px; font-weight:800; text-align:right; font-family:inherit; }
-  .co-change{ text-align:right; font-size:20px; font-weight:800; color:#ffd166; padding:8px 2px 0; min-height:30px; }
-  .co-print{ width:100%; padding:15px; border-radius:12px; border:none; background:linear-gradient(135deg,#ff2d78,#ff6b35); color:#fff; font-size:18px; font-weight:800; cursor:pointer; font-family:inherit; margin-top:14px; }
-  .co-row2{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; }
-  .co-drawer{ padding:13px 0; border-radius:12px; border:1px solid rgba(255,209,102,.4); background:transparent; color:#ffd166; font-size:15px; font-weight:700; cursor:pointer; font-family:inherit; }
-  .co-done{ padding:13px 0; border-radius:12px; border:none; background:#12b76a; color:#fff; font-size:16px; font-weight:800; cursor:pointer; font-family:inherit; }
-  .co-done:disabled{ opacity:.4; }
-  .co-reload{ width:100%; padding:9px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:transparent; color:#888; font-size:13px; cursor:pointer; font-family:inherit; margin-top:7px; }
-  .co-empty{ color:#666; text-align:center; padding:22px 0; font-size:15px; }
-  .co-empty.err{ color:#ff6b6b; }
-
-  </style>
-</head>
-<body>
-  <div class="header">🎤 MATUTAKE コンソール <span style="font-size:13px;opacity:.6;">v3</span>
-    <div class="nav">
-      <button class="nav-btn active" id="nav-kitchen" onclick="showView('kitchen')">🍳 キッチン</button>
-      <button class="nav-btn" id="nav-checkout" onclick="showView('checkout')">💴 会計</button>
-    </div>
-  </div>
-  <div id="view-kitchen">
-  <div class="status" id="status">通知を有効にしてください</div>
-  <div class="enable-wrap"><button class="enable-btn" id="enableBtn">🔊 通知を有効にする</button></div>
-
-  <div class="dash" id="dash" style="display:none;">
-    <div class="col" id="col-left"></div>
-    <div class="col col-feed">
-      <div class="feed-title">📋 注文フィード（新しい順）</div>
-      <div id="list"></div>
-    </div>
-    <div class="col" id="col-right"></div>
-  </div>
-  </div><!-- /view-kitchen -->
-
-  <!-- ═══════════ 会計ビュー ═══════════ -->
-  <div id="view-checkout" style="display:none;">
-    <div class="co-wrap">
-      <div class="co-sec">テーブルを選択</div>
-      <div class="co-tgrid" id="co-tgrid"></div>
-
-      <div class="co-bill" id="co-bill">
-        <div class="co-bill-table" id="co-bill-table"></div>
-        <div id="co-bill-items"></div>
-        <div style="margin-top:10px">
-          <div class="co-sum"><span>小計（税込・注文分）</span><span id="co-s-order">¥0</span></div>
-          <div class="co-sum"><span>🎤 カラオケチャージ</span><span id="co-s-kara">¥0</span></div>
-          <div class="co-kara-note" id="co-s-kara-note"></div>
-          <div class="co-sum co-grand"><span>現在金額</span><span id="co-s-grand">¥0</span></div>
-        </div>
-
-        <div class="co-sec" style="margin-top:14px">支払方法</div>
-        <div class="co-pgrid">
-          <button class="co-pbtn" id="pay-現金" onclick="selPay('現金')">💵 現金</button>
-          <button class="co-pbtn" id="pay-カード" onclick="selPay('カード')">💳 カード</button>
-          <button class="co-pbtn" id="pay-QR" onclick="selPay('QR')">📱 QR</button>
-        </div>
-
-        <div id="co-cash" style="display:none;">
-          <div class="co-sec" style="margin-top:12px">お預り金額</div>
-          <div class="co-qgrid">
-            <button class="co-qbtn" onclick="setTender('exact')">ぴったり</button>
-            <button class="co-qbtn" onclick="setTender(5000)">¥5,000</button>
-            <button class="co-qbtn" onclick="setTender(10000)">¥10,000</button>
-          </div>
-          <input class="co-tender" id="co-tender" type="tel" inputmode="numeric" placeholder="金額を入力" oninput="calcChange()">
-          <div class="co-change" id="co-change"></div>
-        </div>
-
-        <button class="co-print" onclick="printReceipt()">🖨 レシート印刷（＋ドロワー）</button>
-        <div class="co-row2">
-          <button class="co-drawer" onclick="openDrawer()">💰 ドロワーのみ開く</button>
-          <button class="co-done" id="co-done" onclick="doCheckout()">✅ 会計完了</button>
-        </div>
-        <button class="co-reload" onclick="resetVisit()" style="color:#ff8a8e;border-color:rgba(229,72,77,.4)">🗑 来店取消（誤スキャン等・回転は進めない）</button>
-        <button class="co-reload" onclick="loadBill()">🔄 再読み込み</button>
-        <button class="co-reload" onclick="printTest()" style="color:#666">🧪 テスト印刷（3行・切り分け用）</button>
-      </div>
-      <div class="co-empty" id="co-msg">テーブルを選択してください</div>
-    </div>
-  </div><!-- /view-checkout -->
-
-<script>
-var enabled = false;
-var knownKeys = new Set();
-var firstLoad = true;
-
-var BEEP_DATA_URI = "data:audio/wav;base64,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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACUAigAUAZkB7gHqAXcBkQBQ/9z9c/xa+876//r/+8P9GAC2AjsFQAdqCHUIRAfpBKMB3P0V+t72uPQH9P/0mfeO+2MAdgUQCoINPg/tDn8MLwiEAjf8JfYr8QruR+0Y71jzifngAGQICA/XExQWVRWZEUoLMwNj+gzyXutS547mSuk/77P3jgF+CyMUQBrrHKwbkxY5DrADXvjL7XXlj+De35XjTOsN9m4CxQ5fGbsgwiPxIWsb+xD8Ayn2Y+ly38TZONn73YLnmPR/AzkSvR5HJ5kqIyghIJATFgTE89PkVtnx0pzSfNjh41LzwgTYFTok4y1tMUEusyT4Ff4DMfEd4CLTGMwLzBrTaeA+8jcGoxnXKY80PjhKNCIpMRi1A27uQtvXzDnFiMXWzRvdWvHcB5kdki9IOws/PjpsLTwaOQN960HWdsZVvhK/sMj42afwswm4IWw1D0LTRRpAkDEYHIwCXegc0f+/breruKjDANcm8LoLAiZiO+FIlEzfRY81xR2sARDl1Mt0uYSwVLLBvjTU1u/yDXQqdEG/T09Ti0tmOUIfmwCV4WnG1rKZqQ6s+7mU0bjvWxAPL6FHp1YAWh1RFj2PIFn/7d3cwCWsrqLapVa1IM/M7/MS0jPoTZhdqWCUVp5ArCHk/RnaLrtjpcSbuJ/TsNrMEvC8Fbw4SFSRZEZn8Fv9Q5kiPfwZ1l+1kJ7blKuZdKzCyorwsxjNPcJakGvZbTBhM0dUI2X67dFxr66X9Y2ykzio6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3+1fvbBtzqmnjUQEvvQW025a2bpvqjeGPDqEcv/jlWxCHOAhZdG0IcwBpulCALRoEJtpUtaOas41EkP6hecCS5/oR9DkQWvRt7nJRaIxP/St2AprYFrTemYKNrpDzotnBLemZE107FFtvbs9ynGdaTncq0gAQ19yyH5lWjRyR7qM8w8rqNhXEPBJc5G6qcuFmJE3wKC7/idWmsWSYMY2Rkeyko8Rn7NMWJz4NXVJvfnIiZupLZieK/QPUdLCvlxKNDJLwpQzGBu5uGIc/Al68b01yXWWsStol5vuA0kavAJf4jIyS+KZ5x6XvCBrkQPJeH3AWcpJkaklMJEP6/9AdrlaW5YwRkwWo6chF8aEbPULeX3xw2XHDYyRIvCKf+IHP96yxldeMnZMXqVvK5vI4HZNDxGDUcJZx7mLbRish/PYFztarEpXQjC6ULarQy4j0zh7mRKZhJnFNcRRijkWYH1n1jMy5qnmUzozFlEerSM0r9mIgNUaCYnJx/nA1YT1EAx638xXLoanlk9OMYZVmrMPOzff0IYBHWWO4calwUmDpQmwcFvKiyY2oVpPdjAOWia1A0HH5hSPISCtk+HFOcGlfkUHVGnXwMch+p86S7oyqlrGuv9EU+xMlC0r4ZDJy7m97XjZAOxnV7sLGdKZLkgSNV5fdr0HTuPygJktLwGVmcohviF3XPqEXNu1XxW6lzpEhjQmYDbHG1Fz+KyiHTIJmlXIcb5Bcdj0FFpjr78NspFaRQ43BmEGyTNYAALQpv00/Z71yqm6UWxE8aBT76YrCcKPkkGuNfpl5s9XXpAE6K/NO92ffcjJuklqpOsoSX+gpwXiieJCajUCatbRg2UgDvywjUKlo/HK1bYxZPjkrEcXmyr+FoRKQzo0Im/W17drsBEEuT1FWaRJzMm2CWM83iw8r5W++l6CyjwiO1Zs4t3vcjwbAL3dS/Wkjc6psc1deNuoNlOMXva6fV49IjqecgLgM3jMIPTGaU59qLXMbbF9W6zRJDP3hw7vLngKPjo5+ncu5nt/VCbgyuVQ7azJzh2tHVXQzpwpo4HK67J2zjtqOWp4auzLheAswNNNV0mswc+5qKlT7MQQJ1d4luRKdao4sjzyfbbzI4hoNpTXpVmNsKXNPaglTfzBhB0Td3Lc9nCeOhI8ioMO9X+S7Dhc3yFdObAtyUmiPUBMumwWs3M240J4nknCUPqUzwk3ndg8+NYxTVWYla3BhoUrnKcMDZ90DvBCkuphvm7irRMdE6u4PJjMtT0hgPGSdWtJE5yUcAlTeYr9sqVefaKIYsi7MDe00EOAwqkomWlJd21MkPxMipwBx3+rC464AplmpX7jx0KXvSBBsLgVG8lNnVipNlzlrHmX/vuCaxnW0saxBsIy+jNUO8ioQzCs/QaxNfE+MRiw08BpU/jviccohumyzH7eexP7ZRvTaDwApWDxVR5JIAUDkLqMXdP3o43DO5r8tuvG9lMpI3k32WQ8IJlA37kCrQYo5vymDFMf8xOWU0sLF9cC4xG7QZ+Ik+KYO5SIqMng6xzopM74kkhFL/M/n3ta2y8LHccsp1l3myfnCDZcf5iz1M+gz3izjH88OAvwI6k3bv9GTzh3Sxtso6j77rgwfHIQnZC0PLaomLRs8DOr7cOzf393XZ9W52EPhx+2B/GgLfhgFIsgmPCaOIJ0W1wkE/AXvleQP3j7cRd+h5jvxkv3zCbQUaxwiIHEfixo1EqIHUPzH8W3pVOQV48Dl3euC9HL+TQjBELYWchmuGKIU9A2dBc38tvRn7qvq7Okp7PjwnPcg/3cGqAzoELkS9hHVDtsJyQN8/dH3gfMT8cLwfvLw9Yr6nf9yBGcIAQv5C0gLIgnrBSQCXf4X+7z4i/eW98D4xfpK/ej/PQIBBAEFMgWmBI0DJAKwAG//if4W/hL+Z/7s/nb/2/8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-
-var audioCtx = null;
-var audioBuffer = null;
-
-function base64ToArrayBuffer(base64){
-  var binary = atob(base64);
-  var bytes = new Uint8Array(binary.length);
-  for(var i=0;i<binary.length;i++){ bytes[i] = binary.charCodeAt(i); }
-  return bytes.buffer;
+  return sheet;
 }
 
-async function initAudio(){
-  try{
-    var AC = window.AudioContext || window.webkitAudioContext;
-    audioCtx = new AC();
-    if(audioCtx.state === "suspended"){ await audioCtx.resume(); }
-    var base64 = BEEP_DATA_URI.split(",")[1];
-    var arrayBuf = base64ToArrayBuffer(base64);
-    audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
-  }catch(e){
-    document.getElementById("status").textContent = "音声初期化エラー: " + e;
+// ── テーブルの「現在の来店回」を取得・更新（日付シート単位） ──────
+function visitPropKey_(sheetName, table) {
+  return "visit_" + sheetName + "_" + String(table);
+}
+function getCurrentVisit_(sheetName, table) {
+  var v = PropertiesService.getDocumentProperties().getProperty(visitPropKey_(sheetName, table));
+  return v ? Number(v) : 1;
+}
+function bumpVisit_(sheetName, table) {
+  var current = getCurrentVisit_(sheetName, table);
+  PropertiesService.getDocumentProperties().setProperty(visitPropKey_(sheetName, table), String(current + 1));
+}
+
+// ── テーブル番号の見出しラベルを整形（2回目以降は回数を明記） ─────
+function labelForTable_(table, visit) {
+  var t = String(table);
+  var base = (t === "") ? "卓番なし" : (/^C\d+$/i.test(t) ? "カウンター " + t : "テーブル " + t);
+  if (visit && visit > 1) base += "（" + visit + "回目）";
+  return "◆ " + base + " ◆";
+}
+
+// ── 集計行（テーブル小計／本日合計）かどうかを品目列で判定 ─────
+function isSummaryRow_(row) {
+  return row[COL_ITEM-1] === SUB_LABEL || row[COL_ITEM-1] === TOTAL_LABEL;
+}
+
+// ── 末尾の集計ブロック（区切り行＋テーブル小計＋本日合計）を削除 ──
+function removeSummaryBlock_(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  var data = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues();
+  var firstSummaryIdx = -1;
+  for (var i = 0; i < data.length; i++) {
+    if (isSummaryRow_(data[i])) { firstSummaryIdx = i; break; }
   }
-}
-
-var BEEP_GAIN = 2.5;   // 音量倍率（1=等倍。2.5=+150%。大きすぎて割れる場合はここを下げる）
-
-function beep(){
-  if(!audioCtx || !audioBuffer) return;
-  try{
-    if(audioCtx.state === "suspended"){ audioCtx.resume(); }
-    var src = audioCtx.createBufferSource();
-    src.buffer = audioBuffer;
-    var gain = audioCtx.createGain();
-    gain.gain.value = BEEP_GAIN;
-    // 音割れをある程度抑えるコンプレッサーを挟む
-    var comp = audioCtx.createDynamicsCompressor();
-    src.connect(gain);
-    gain.connect(comp);
-    comp.connect(audioCtx.destination);
-    src.start(0);
-  }catch(e){
-    document.getElementById("status").textContent = "再生エラー: " + e;
+  if (firstSummaryIdx < 0) return;
+  var deleteStartRow = firstSummaryIdx + 2;
+  var i2 = firstSummaryIdx - 1;
+  while (i2 >= 0) {
+    var isBlank = data[i2].every(function(v){ return v === ""; });
+    if (!isBlank) break;
+    deleteStartRow -= 1;
+    i2 -= 1;
   }
+  sheet.deleteRows(deleteStartRow, sheet.getLastRow() - deleteStartRow + 1);
 }
 
-var wakeLock = null;
-async function requestWakeLock(){
-  try{
-    if("wakeLock" in navigator){
-      wakeLock = await navigator.wakeLock.request("screen");
-    }
-  }catch(e){}
-}
+// ── 実注文行だけを読み、テーブル→来店回→時刻順にソートして
+//    見出し行を挟みながら書き直す ────────────────────────────
+function rebuildWithTitles_(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
 
-document.addEventListener("visibilitychange", function(){
-  if(document.visibilityState === "visible" && enabled){
-    requestWakeLock();
-    if(audioCtx && audioCtx.state === "suspended"){ audioCtx.resume(); }
-    poll();
-  }
-});
+  var data = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues()
+    .filter(function(r) { return r[COL_STATUS-1] !== TITLE_TAG && !isSummaryRow_(r) && r[COL_ITEM-1] !== ""; });
 
-document.getElementById("enableBtn").addEventListener("click", async function(){
-  await initAudio();
-  beep();
-  enabled = true;
-  requestWakeLock();
-  document.getElementById("status").textContent = "通知有効：注文を監視中…";
-  document.getElementById("enableBtn").style.display = "none";
-  document.getElementById("dash").style.display = "grid";
-  poll();
-  setInterval(poll, 8000);
-});
-
-function orderKey(o){
-  return o.time + "_" + o.table + "_" + o.name + "_" + o.visit;
-}
-
-var GAS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbzHkfQ0hms6isOHg09y83rUktyjjO7vMCWuGv0yeeSZrZkkDhL8bKLJEGu87zJyv1h6tw/exec";
-
-// カラオケチャージ（1人あたり：最初の2時間¥1,500 ＋ 以降2時間枠ごと¥500）
-var KARA_BASE = 1500, KARA_ADD = 500, KARA_BLOCK_MS = 2*60*60*1000;
-var clockOffset = 0;     // サーバー時刻との差（端末の時計ズレ対策）
-var lastTables = null;   // 直近のテーブル情報
-var lastOrders = [];
-
-function calcKara(karaStart, guests){
-  if(!karaStart) return null;
-  var now = Date.now() + clockOffset;
-  var elapsed = Math.max(0, now - karaStart);
-  var blocks = Math.floor(elapsed / KARA_BLOCK_MS) + 1;
-  var per = KARA_BASE + (blocks-1)*KARA_ADD;
-  var g = guests || 1;
-  var h = Math.floor(elapsed/3600000), m = Math.floor((elapsed%3600000)/60000);
-  return { charge: per*g, label: h+"時間"+m+"分" };
-}
-
-function poll(){
-  var now = new Date().toLocaleTimeString("ja-JP");
-  fetch(GAS_WEBAPP_URL + "?action=getTablesInfo")
-    .then(function(r){ return r.json(); })
-    .then(function(res){
-      if(!res || !res.success){
-        document.getElementById("status").textContent = "取得失敗("+now+"): " + (res && res.error);
-        return;
-      }
-      if(res.serverNow){ clockOffset = res.serverNow - Date.now(); }
-      var orders = res.orders || [];
-      lastOrders = orders;
-      lastTables = res.tables || {};
-
-      var newOnes = [];
-      orders.forEach(function(o){
-        var k = orderKey(o);
-        if(!knownKeys.has(k)){
-          knownKeys.add(k);
-          if(!firstLoad) newOnes.push(o);
-        }
-      });
-      if(newOnes.length > 0 && enabled){ beep(); }
-
-      renderList(orders, newOnes);
-      renderTables();
-      firstLoad = false;
-      document.getElementById("status").textContent =
-        "監視中（最終チェック: "+now+"／本日の注文: "+orders.length+"件）";
-    })
-    .catch(function(err){
-      document.getElementById("status").textContent = "取得エラー("+now+"): " + err;
-    });
-}
-
-// ── 左右のテーブルサマリー ──────────────────────────
-function renderTables(){
-  if(!lastTables) return;
-  var left = ["1","2","3","C1","C2","C3"], right = ["4","5","6","C4","C5","C6"];
-  document.getElementById("col-left").innerHTML  = left.map(tablePanelHTML).join("");
-  document.getElementById("col-right").innerHTML = right.map(tablePanelHTML).join("");
-}
-
-function tablePanelHTML(t){
-  var info = lastTables[t] || {};
-  var k = calcKara(info.karaStart, info.guests);
-  var active = !!info.karaStart;
-
-  // 現在の来店回・キャンセル以外の品目を「品名×数」で集計
-  var items = {};
-  lastOrders.forEach(function(o){
-    if(o.table !== t) return;
-    if(o.visit !== info.visit) return;
-    if(o.status === "キャンセル") return;
-    items[o.name] = (items[o.name]||0) + o.qty;
+  data.sort(function(a, b) {
+    var ta = String(a[COL_TABLE-1]), tb = String(b[COL_TABLE-1]);
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    var va = Number(a[COL_VISIT-1])||1, vb = Number(b[COL_VISIT-1])||1;
+    if (va !== vb) return va - vb;
+    var sa = String(a[COL_TIME-1]), sb = String(b[COL_TIME-1]);
+    return sa < sb ? -1 : (sa > sb ? 1 : 0);
   });
-  var itemNames = Object.keys(items);
-  var itemsHTML = itemNames.length
-    ? itemNames.map(function(n){ return n + "×" + items[n]; }).join("、")
-    : "";
 
-  var orderTotal = info.orderTotal || 0;
-  var charge = k ? k.charge : 0;
-  var total = orderTotal + charge;
+  var newRows = [];
+  var prevKey = null;
+  data.forEach(function(r) {
+    var table = r[COL_TABLE-1], visit = Number(r[COL_VISIT-1])||1;
+    var key = table + "|" + visit;
+    if (key !== prevKey) {
+      var titleRow = new Array(ORDER_HEADERS.length).fill("");
+      titleRow[COL_ITEM-1] = labelForTable_(table, visit);
+      titleRow[COL_STATUS-1] = TITLE_TAG;
+      newRows.push(titleRow);
+      prevKey = key;
+    }
+    newRows.push(r);
+  });
 
-  var guestsLabel = info.guests ? (info.guests + "名様") : "未入力";
-
-  var html = '<div class="tpanel'+(active?' active':'')+'">'
-    + '<div class="tpanel-head">'
-    +   '<div class="tpanel-title">'+(t.charAt(0)==="C" ? "カウンター "+t : "テーブル "+t)+'</div>'
-    +   '<div class="tpanel-visit">'+(info.visit||1)+'回転目</div>'
-    + '</div>';
-
-  if(!active && itemNames.length===0){
-    html += '<div class="empty-note">ご来店なし</div></div>';
-    return html;
+  sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).clearContent().clearFormat().clearDataValidations();
+  sheet.getRange(2, COL_TIME, lastRow - 1, 1).setNumberFormat("@");
+  sheet.getRange(2, COL_DONE_TIME, lastRow - 1, 1).setNumberFormat("@");
+  SpreadsheetApp.flush();
+  if (newRows.length > 0) {
+    sheet.getRange(2, 1, newRows.length, ORDER_HEADERS.length).setValues(newRows);
   }
 
-  html += '<div class="tpanel-row"><span>人数</span>'
-    + '<span class="guests-adjust">'
-    +   '<button class="gbtn" onclick="adjustGuests(\''+t+'\',-1)">－</button>'
-    +   '<span class="gval">'+guestsLabel+'</span>'
-    +   '<button class="gbtn" onclick="adjustGuests(\''+t+'\',1)">＋</button>'
-    + '</span></div>';
+  var orderStatusRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(ORDER_STATUS_OPTIONS, true)
+    .setAllowInvalid(true)
+    .build();
 
-  if(k){
-    html += '<div class="tpanel-row"><span>🎤 チャージ（'+k.label+'）</span><span class="val">¥'+charge.toLocaleString()+'</span></div>';
+  for (var i = 0; i < newRows.length; i++) {
+    var rowNum = i + 2;
+    var range = sheet.getRange(rowNum, 1, 1, ORDER_HEADERS.length);
+    if (newRows[i][COL_STATUS-1] === TITLE_TAG) {
+      range.setBackground(TITLE_BG).setFontColor(TITLE_FG).setFontWeight("bold");
+    } else {
+      range.setBackground("#FFFFFF").setFontColor("#000000").setFontWeight("normal");
+      sheet.getRange(rowNum, COL_STATUS).setDataValidation(orderStatusRule);
+    }
   }
-  html += '<div class="tpanel-row"><span>ご注文</span><span class="val">¥'+orderTotal.toLocaleString()+'</span></div>';
-  if(itemsHTML){
-    html += '<div class="tpanel-items">'+itemsHTML+'</div>';
+  if (newRows.length > 0) {
+    sheet.getRange(2, 1, newRows.length, ORDER_HEADERS.length).setFontSize(11);
+    sheet.setRowHeights(2, newRows.length, 45);
   }
-  html += '<div class="tpanel-total"><span>合計（チャージ込）</span><span>¥'+total.toLocaleString()+'</span></div>';
-  html += '</div>';
+}
+
+// ── テーブル×来店回ごとの小計・本日合計を末尾に追加 ────────────
+function appendSummaryRows_(sheet) {
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+  var data = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues();
+  var sheetName = sheet.getName();
+
+  var groups = {}; // key: table|visit → {table, visit, subtotal}
+  var grandTotal = 0;
+  data.forEach(function(r) {
+    if (r[COL_STATUS-1] === TITLE_TAG || isSummaryRow_(r)) return;
+    if (r[COL_STATUS-1] === "キャンセル") return; // キャンセル品目は集計から除外
+    var table = r[COL_TABLE-1] || "(卓番なし)";
+    var visit = Number(r[COL_VISIT-1]) || 1;
+    var key = table + "|" + visit;
+    if (!groups[key]) groups[key] = { table: table, visit: visit, subtotal: 0 };
+    groups[key].subtotal += Number(r[COL_SUBTOTAL-1]) || 0;
+    grandTotal += Number(r[COL_SUBTOTAL-1]) || 0;
+  });
+
+  var keys = Object.keys(groups).sort(function(a,b){
+    var ga=groups[a], gb=groups[b];
+    if (String(ga.table) !== String(gb.table)) return String(ga.table) < String(gb.table) ? -1 : 1;
+    return ga.visit - gb.visit;
+  });
+
+  var rowCursor = lastRow + 1; // 次に書き込む行番号を自前で管理（空文字行はgetLastRow()に反映されないため）
+
+  // 黄色い区切り行（注文一覧との区分け）
+  sheet.getRange(rowCursor, 1, 1, ORDER_HEADERS.length).setValues([["", "", "", "", "", "", "", ""]]);
+  sheet.getRange(rowCursor, 1, 1, ORDER_HEADERS.length).setBackground("#FFEB3B");
+  rowCursor++;
+
+  // 区切り行（テーブル小計の直前）
+  sheet.getRange(rowCursor, 1, 1, ORDER_HEADERS.length).setValues([["", "", "", "", "", "", "", ""]]);
+  sheet.getRange(rowCursor, 1, 1, ORDER_HEADERS.length).setBackground("#C41E5A");
+  rowCursor++;
+
+  var subtotalStartRow = rowCursor;
+  keys.forEach(function(key) {
+    var g = groups[key];
+    var currentVisit = getCurrentVisit_(sheetName, g.table);
+    var billingStatus = (g.visit < currentVisit) ? BILLING_STATUS_PAID : BILLING_STATUS_DEFAULT;
+    sheet.getRange(rowCursor, 1, 1, ORDER_HEADERS.length).setValues([["", g.table, SUB_LABEL, "", g.subtotal, billingStatus, "", g.visit]]);
+    rowCursor++;
+  });
+  var totalRow = rowCursor;
+  sheet.getRange(totalRow, 1, 1, ORDER_HEADERS.length).setValues([["", "全体", TOTAL_LABEL, "", grandTotal, "", "", ""]]);
+  sheet.setRowHeights(subtotalStartRow - 2, totalRow - (subtotalStartRow - 2) + 1, 45);
+
+  var tableCount = keys.length;
+
+  if (tableCount > 0) {
+    var subRange = sheet.getRange(subtotalStartRow, 1, tableCount, ORDER_HEADERS.length);
+    subRange.setBackground("#F5F5F5");
+    var billingRule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(BILLING_STATUS_OPTIONS, true)
+      .setAllowInvalid(true)
+      .build();
+    sheet.getRange(subtotalStartRow, COL_STATUS, tableCount, 1).setDataValidation(billingRule);
+
+    for (var i = 0; i < tableCount; i++) {
+      var rowNum = subtotalStartRow + i;
+      if (sheet.getRange(rowNum, COL_STATUS).getValue() === BILLING_STATUS_PAID) {
+        sheet.getRange(rowNum, 1, 1, ORDER_HEADERS.length).setBackground(PAID_BG).setFontColor(PAID_FG);
+      }
+    }
+  }
+  sheet.getRange(totalRow, 1, 1, ORDER_HEADERS.length)
+       .setBackground("#C41E5A").setFontColor("#FFFFFF").setFontWeight("bold");
+}
+
+// ── 手動実行用：今日のシートに列幅・中央揃えを今すぐ適用 ─────────
+function formatTodaySheetNow() {
+  var sheet = getTodaySheet_();
+  sheet.setColumnWidth(COL_ITEM, 300);
+  sheet.setColumnWidth(COL_TABLE, 70);
+  sheet.setColumnWidth(COL_QTY, 70);
+  sheet.setColumnWidth(COL_SUBTOTAL, 70);
+  sheet.getRange("B:B").setHorizontalAlignment("center");
+  sheet.getRange("D:D").setHorizontalAlignment("center");
+  sheet.getRange("E:E").setHorizontalAlignment("center");
+  sheet.getRange("E:E").setNumberFormat("#,##0");
+  var lastRow = sheet.getLastRow();
+  if (lastRow >= 1) sheet.setRowHeights(1, lastRow, 45);
+  fixTimeColumnsNow_(sheet);
+}
+
+// ── 手動実行用：日時・完了時刻列がDate化してしまった既存セルを文字列に戻す ─
+function fixTimeColumnsNow_(sheet) {
+  sheet = sheet || getTodaySheet_();
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  [COL_TIME, COL_DONE_TIME].forEach(function(col) {
+    var range = sheet.getRange(2, col, lastRow - 1, 1);
+    var values = range.getValues();
+    var fixed = values.map(function(row) {
+      var v = row[0];
+      if (v instanceof Date) {
+        // 1899/12/30近辺（時刻のみのシリアル値）かどうかに関わらず、時刻文字列に変換
+        return [Utilities.formatDate(v, "Asia/Tokyo", "HH:mm:ss")];
+      }
+      return [v];
+    });
+    range.setNumberFormat("@");
+    range.setValues(fixed);
+  });
+}
+
+// ── 手動実行用：今日のシートの注文行プルダウンを最新の選択肢に更新 ─
+function refreshOrderStatusDropdownNow() {
+  var sheet = getTodaySheet_();
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  var data = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues();
+  var orderStatusRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(ORDER_STATUS_OPTIONS, true)
+    .setAllowInvalid(true)
+    .build();
+
+  for (var i = 0; i < data.length; i++) {
+    var r = data[i];
+    if (r[COL_STATUS-1] === TITLE_TAG || isSummaryRow_(r) || r[COL_ITEM-1] === "") continue;
+    sheet.getRange(i + 2, COL_STATUS).setDataValidation(orderStatusRule);
+  }
+}
+
+// ── HTMLページを返す ──────────────────────────────────────────
+function jsonOutput_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doGet(e) {
+  // ── 外部ホスティング用のJSON APIエンドポイント ──────────────
+  if (e.parameter.action === "getOrders") {
+    var res = getOrders(e.parameter.table || "");
+    return jsonOutput_(res);
+  }
+  if (e.parameter.action === "getTodayOrders") {
+    var res2 = getTodayOrders();
+    return jsonOutput_(res2);
+  }
+  if (e.parameter.action === "submitOrder") {
+    try {
+      var data = JSON.parse(e.parameter.data);
+      var res3 = submitOrder(data);
+      return jsonOutput_(res3);
+    } catch (err) {
+      Logger.log("submitOrder(GET) error: " + err);
+      return jsonOutput_({ success: false, error: err.toString() });
+    }
+  }
+  if (e.parameter.action === "updateOrderStatus") {
+    var res4 = updateOrderStatus(
+      e.parameter.table, e.parameter.time, e.parameter.name,
+      e.parameter.visit, e.parameter.status
+    );
+    return jsonOutput_(res4);
+  }
+  if (e.parameter.action === "startKaraoke") {
+    return jsonOutput_(startKaraoke(e.parameter.table || ""));
+  }
+  if (e.parameter.action === "getKaraokeInfo") {
+    return jsonOutput_(getKaraokeInfo(e.parameter.table || ""));
+  }
+  if (e.parameter.action === "setGuests") {
+    return jsonOutput_(setGuests(e.parameter.table || "", e.parameter.guests || ""));
+  }
+  if (e.parameter.action === "getSalesReport") {
+    return jsonOutput_(getSalesReport(String(e.parameter.date || "")));
+  }
+  if (e.parameter.action === "getPurchaseMaster") {
+    return jsonOutput_(getPurchaseMaster());
+  }
+  if (e.parameter.action === "submitPurchase") {
+    return jsonOutput_(submitPurchase(JSON.parse(e.parameter.data || "{}")));
+  }
+  if (e.parameter.action === "getRecentPurchases") {
+    return jsonOutput_(getRecentPurchases());
+  }
+  if (e.parameter.action === "markPurchaseReceived") {
+    return jsonOutput_(markPurchaseReceived(Number(e.parameter.row || 0)));
+  }
+  if (e.parameter.action === "punchClock") {
+    return jsonOutput_(punchClock(String(e.parameter.name || ""), String(e.parameter.type || "")));
+  }
+  if (e.parameter.action === "getTodayShifts") {
+    return jsonOutput_(getTodayShifts());
+  }
+  if (e.parameter.action === "resetVisit") {
+    return jsonOutput_(resetVisit(String(e.parameter.table || "")));
+  }
+  if (e.parameter.action === "checkoutTable") {
+    return jsonOutput_(checkoutTable(
+      String(e.parameter.table || ""), String(e.parameter.pay || ""),
+      {
+        payMethod: String(e.parameter.payMethod || ""),
+        staff: String(e.parameter.staff || ""),
+        orderTotal: Number(e.parameter.order || 0),
+        karaCharge: Number(e.parameter.kara || 0),
+        grand: Number(e.parameter.grand || 0),
+        guests: Number(e.parameter.guests || 0)
+      }
+    ));
+  }
+  if (e.parameter.action === "getSoldOut") {
+    return jsonOutput_(getSoldOut());
+  }
+  if (e.parameter.action === "setSoldOut") {
+    return jsonOutput_(setSoldOut(String(e.parameter.id || ""), String(e.parameter.sold || "")));
+  }
+  if (e.parameter.action === "getTablesInfo") {
+    return jsonOutput_(getTablesInfo());
+  }
+
+  // ── 従来通り、GAS自身でHTMLページを返す場合（社内テスト等用） ─
+  if (e.parameter.view === "kitchen") {
+    var kitchenHtml = HtmlService.createHtmlOutputFromFile("Kitchen");
+    kitchenHtml.setTitle("🔔 MATSUTAKE キッチン通知");
+    kitchenHtml.addMetaTag("viewport", "width=device-width, initial-scale=1");
+    kitchenHtml.setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    return kitchenHtml;
+  }
+  var tableNo = e.parameter.table || "";
+  var template = HtmlService.createTemplateFromFile("Index");
+  template.tableNo = tableNo;
+  var html = template.evaluate();
+  html.setTitle("🎤 MATSUTAKE ORDER");
+  html.addMetaTag("viewport", "width=device-width, initial-scale=1, user-scalable=no");
+  html.setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   return html;
 }
 
-// キッチン側での人数補正（お客様の入力ミス・途中合流に対応）
-function adjustGuests(table, delta){
-  var info = lastTables && lastTables[table];
-  var cur = (info && info.guests) ? info.guests : 0;
-  var next = cur + delta;
-  if(next < 1) next = 1;
-  if(next > 20) next = 20;
-  if(next === cur) return;
-  fetch(GAS_WEBAPP_URL + "?action=setGuests&table="+encodeURIComponent(table)+"&guests="+next)
-    .then(function(r){ return r.json(); })
-    .then(function(res){
-      if(res && res.success){
-        lastTables[table].guests = res.guests;
-        renderTables();
-      }else{
-        document.getElementById("status").textContent = "人数更新失敗: " + (res && res.error);
-      }
-    })
-    .catch(function(err){
-      document.getElementById("status").textContent = "人数更新エラー: " + err;
-    });
-}
-
-// ── 中央：注文フィード ──────────────────────────────
-function renderList(orders, newOnes){
-  var newKeys = new Set(newOnes.map(orderKey));
-  var recent;
-  try{
-    recent = orders.slice().sort(function(a, b){
-      var ta = String(a.time), tb = String(b.time);
-      if (ta === tb) return 0;
-      return ta < tb ? 1 : -1;
-    }).slice(0, 20);
-  }catch(e){
-    recent = orders.slice(-20).reverse();
-  }
-  var list = document.getElementById("list");
-  var STATUS_OPTIONS = ["未対応", "対応済み", "キャンセル"];
-  list.innerHTML = recent.map(function(o){
-    var isNew = newKeys.has(orderKey(o));
-    var btnsHTML = STATUS_OPTIONS.map(function(s){
-      var active = (o.status === s);
-      return '<button class="status-btn '+statusClass_(s)+(active?' active':'')+'" '
-        + 'onclick="changeStatus(this,\''+escapeAttr_(o.table)+'\',\''+escapeAttr_(o.time)+'\',\''+escapeAttr_(o.name)+'\','+o.visit+',\''+s+'\')">'+s+'</button>';
-    }).join("");
-    return '<div class="order-card'+(isNew?' new':'')+'">'
-      + '<div class="order-top">'
-      + '<div><span class="tbadge">'+(String(o.table).charAt(0)==="C" ? o.table : o.table+'卓')+'</span>'
-      + '<span class="order-name">'+o.name+' ×'+o.qty+'</span>'
-      + '<div class="order-meta">'+o.visit+'回転目</div></div>'
-      + '<div class="order-time">'+o.time+'</div></div>'
-      + '<div class="status-btns">'+btnsHTML+'</div>'
-      + '</div>';
-  }).join("");
-}
-
-function statusClass_(s){
-  if(s==="未対応") return "status-pending";
-  if(s==="対応済み") return "status-done";
-  return "status-cancel";
-}
-function escapeAttr_(s){
-  return String(s).replace(/'/g, "\\'");
-}
-
-function changeStatus(btn, table, time, name, visit, newStatus){
-  if(newStatus === "キャンセル" && !confirm("この注文をキャンセルにしますか？")) return;
-  btn.closest(".status-btns").querySelectorAll(".status-btn").forEach(function(b){ b.disabled = true; });
-  fetch(GAS_WEBAPP_URL + "?action=updateOrderStatus"
-    + "&table=" + encodeURIComponent(table)
-    + "&time=" + encodeURIComponent(time)
-    + "&name=" + encodeURIComponent(name)
-    + "&visit=" + encodeURIComponent(visit)
-    + "&status=" + encodeURIComponent(newStatus))
-    .then(function(r){ return r.json(); })
-    .then(function(res){
-      if(!res || !res.success){
-        document.getElementById("status").textContent = "更新失敗: " + (res && res.error);
-      }
-      poll();
-    })
-    .catch(function(err){
-      document.getElementById("status").textContent = "更新エラー: " + err;
-    });
-}
-
-// チャージの経過時間表示を1分ごとに更新（ポーリングとは別に画面だけ更新）
-setInterval(function(){ if(enabled) renderTables(); }, 60000);
-
-// ═══════════════════ ビュー切替 ═══════════════════
-function showView(v){
-  document.getElementById("view-kitchen").style.display  = (v==="kitchen")  ? "" : "none";
-  document.getElementById("view-checkout").style.display = (v==="checkout") ? "" : "none";
-  document.getElementById("nav-kitchen").className  = "nav-btn"+(v==="kitchen"?" active":"");
-  document.getElementById("nav-checkout").className = "nav-btn"+(v==="checkout"?" active":"");
-  // 会計ビューを開いてもポーリング・受信音は継続する（同一ページのため）
-}
-
-// ═══════════════════ 会計ビュー ═══════════════════
-var STORE_NAME = "カラオケ♪酒場 マツタケ";
-var coTable = null, coBill = null, coPay = null;
-
-var CO_TABLES = ["1","2","3","4","5","6","C1","C2","C3","C4","C5","C6"];
-document.getElementById("co-tgrid").innerHTML = CO_TABLES.map(function(t){
-  return '<button class="co-tbtn" id="co-tb'+t+'" onclick="coSelTable(\''+t+'\')">'+t+'</button>';
-}).join("");
-
-function coSelTable(t){
-  coTable = t;
-  CO_TABLES.forEach(function(x){
-    document.getElementById("co-tb"+x).className = "co-tbtn"+(x===t?" active":"");
-  });
-  coPay = null; renderPay();
-  document.getElementById("co-tender").value = "";
-  document.getElementById("co-change").textContent = "";
-  loadBill();
-}
-
-function loadBill(){
-  if(!coTable) return;
-  var msg = document.getElementById("co-msg");
-  msg.textContent = "読み込み中..."; msg.className = "co-empty"; msg.style.display = "block";
-  document.getElementById("co-bill").className = "co-bill";
-  Promise.all([
-    fetch(GAS_WEBAPP_URL+"?action=getOrders&table="+encodeURIComponent(coTable)).then(function(r){return r.json();}),
-    fetch(GAS_WEBAPP_URL+"?action=getKaraokeInfo&table="+encodeURIComponent(coTable)).then(function(r){return r.json();})
-  ]).then(function(res){
-    var ord = res[0], kara = res[1];
-    if(!ord || !ord.success){ coErr("注文の取得に失敗しました"); return; }
-    var orders = ord.orders || [];
-    var orderTotal = orders.reduce(function(s,o){
-      return s + (o.status==="キャンセル" ? 0 : (Number(o.amount)||0));
-    }, 0);
-    var karaCharge = 0, karaLabel = "利用記録なし", karaGuests = null;
-    if(kara && kara.success && kara.startTime){
-      karaGuests = Number(kara.guests) || 1;
-      var elapsed = Math.max(0, (Date.now()+clockOffset) - Number(kara.startTime));
-      var blocks = Math.floor(elapsed / KARA_BLOCK_MS) + 1;
-      var per = KARA_BASE + (blocks-1)*KARA_ADD;
-      karaCharge = per * karaGuests;
-      var h = Math.floor(elapsed/3600000), m = Math.floor((elapsed%3600000)/60000);
-      karaLabel = karaGuests+"名様 × ¥"+per.toLocaleString()+"（ご利用 "+h+"時間"+m+"分）"+(kara.guests?"":" ※人数未入力");
+// ── 外部ホスティングのページから注文を送信する際の入り口 ──────
+function doPost(e) {
+  try {
+    var body = JSON.parse(e.postData.contents);
+    if (body.action === "submitOrder") {
+      var res = submitOrder(body.data);
+      return jsonOutput_(res);
     }
-    coBill = {orders:orders, orderTotal:orderTotal, karaCharge:karaCharge, karaLabel:karaLabel, karaGuests:karaGuests, grand:orderTotal+karaCharge};
-    renderCoBill();
-  }).catch(function(){ coErr("通信エラーが発生しました"); });
-}
-
-function coErr(t){
-  var msg = document.getElementById("co-msg");
-  msg.textContent = t; msg.className = "co-empty err";
-}
-
-function renderCoBill(){
-  var b = coBill;
-  document.getElementById("co-msg").style.display = "none";
-  document.getElementById("co-bill").className = "co-bill show";
-  document.getElementById("co-bill-table").textContent = "テーブル "+coTable;
-  if(b.orders.length===0){
-    document.getElementById("co-bill-items").innerHTML = '<div class="co-empty">注文はありません</div>';
-  } else {
-    document.getElementById("co-bill-items").innerHTML = b.orders.map(function(o){
-      var c = o.status==="キャンセル";
-      return '<div class="co-item'+(c?' cancelled':'')+'"><span class="nm">'+o.name+'</span><span class="qt">×'+o.qty+'</span><span class="am">¥'+Number(o.amount).toLocaleString()+'</span></div>';
-    }).join("");
+    return jsonOutput_({ success: false, error: "不明なaction: " + body.action });
+  } catch (err) {
+    Logger.log("doPost error: " + err);
+    return jsonOutput_({ success: false, error: err.toString() });
   }
-  document.getElementById("co-s-order").textContent = "¥"+b.orderTotal.toLocaleString();
-  document.getElementById("co-s-kara").textContent = "¥"+b.karaCharge.toLocaleString();
-  document.getElementById("co-s-kara-note").textContent = b.karaLabel;
-  document.getElementById("co-s-grand").textContent = "¥"+b.grand.toLocaleString();
-  calcChange();
 }
 
-// ── 支払方法・お釣り ──
-function selPay(p){
-  coPay = p; renderPay();
-  document.getElementById("co-cash").style.display = (p==="現金") ? "" : "none";
-  if(p!=="現金"){ document.getElementById("co-tender").value=""; document.getElementById("co-change").textContent=""; }
+// ── 注文を受け取り「今日のシート」に記録し、集計を再構築 ────────
+function submitOrder(data) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000); // 最大30秒、他の注文処理が終わるのを待つ
+  } catch (lockErr) {
+    Logger.log("submitOrder lock timeout: " + lockErr);
+    return { success: false, error: "混雑のため処理に時間がかかっています。少し待って再度お試しください。" };
+  }
+
+  try {
+    var sheet = getTodaySheet_();
+    var sheetName = sheet.getName();
+    removeSummaryBlock_(sheet);
+
+    var now = new Date();
+    var ts  = Utilities.formatDate(now, "Asia/Tokyo", "HH:mm:ss");
+    var visit = getCurrentVisit_(sheetName, data.tableNo);
+
+    // 追加される行をあらかじめ「文字列」書式にしてから書き込む
+    // （先に書き込んでから書式を変えると、Google側が時刻として自動変換してしまうため）
+    var startRow = sheet.getLastRow() + 1;
+    var rowCount = data.items.length;
+    if (rowCount > 0) {
+      sheet.getRange(startRow, COL_TIME, rowCount, 1).setNumberFormat("@");
+      sheet.getRange(startRow, COL_DONE_TIME, rowCount, 1).setNumberFormat("@");
+      SpreadsheetApp.flush(); // 書式設定を確実に反映させてから値を書き込む
+    }
+
+    data.items.forEach(function(item) {
+      var lineSubtotal = Math.round(item.price * item.qty * 1.1);
+      sheet.appendRow([ts, data.tableNo, item.name, item.qty, lineSubtotal, "未対応", "", visit]);
+    });
+
+    rebuildWithTitles_(sheet);
+    appendSummaryRows_(sheet);
+
+    if (CONFIG.NOTIFY_EMAIL) {
+      var body = "【MATSUTAKE】テーブル" + data.tableNo + "より注文\n\n" +
+        data.items.map(function(i){ return "・" + i.name + " ×" + i.qty; }).join("\n") +
+        "\n\n小計(税別): ¥" + data.subtotal +
+        "\n消費税: ¥" + data.tax +
+        "\n合計(税込): ¥" + data.total;
+      MailApp.sendEmail(CONFIG.NOTIFY_EMAIL, "【MATSUTAKE】新規注文", body);
+    }
+
+    // 安全網：この時点でカラオケ計時が始まっていなければ注文時刻から開始
+    // （人数モーダルを閉じてしまった場合や、スタッフが開始を押し忘れた場合の取りこぼし防止）
+    startKaraoke(String(data.tableNo || ""));
+
+    return { success: true };
+
+  } catch (err) {
+    Logger.log("submitOrder error: " + err);
+    return { success: false, error: err.toString() };
+  } finally {
+    lock.releaseLock();
+  }
 }
-function renderPay(){
-  ["現金","カード","QR"].forEach(function(p){
-    document.getElementById("pay-"+p).className = "co-pbtn"+(coPay===p?" active":"");
+
+// ── シート編集トリガー：小計行が「お会計済み」にされたら来店回を+1 ─
+function onEdit(e) {
+  try {
+    if (!e || !e.range) return;
+    var range = e.range;
+    if (range.getNumRows() !== 1 || range.getNumColumns() !== 1) return;
+    if (range.getColumn() !== COL_STATUS) return;
+    if (range.getRow() < 2) return;
+
+    var sheet = range.getSheet();
+    var itemVal = sheet.getRange(range.getRow(), COL_ITEM).getValue();
+    var newStatus = range.getValue();
+
+    if (itemVal === SUB_LABEL) {
+      // テーブル小計行：会計済みにしたら来店回を+1
+      if (newStatus !== BILLING_STATUS_PAID) return;
+      var table = sheet.getRange(range.getRow(), COL_TABLE).getValue();
+      bumpVisit_(sheet.getName(), table);
+      return;
+    }
+
+    if (itemVal === TOTAL_LABEL || itemVal === "" || newStatus === TITLE_TAG) return;
+
+    // 注文行：「対応済み」にしたら完了時刻を記録、それ以外に変えたら消す
+    var doneCell = sheet.getRange(range.getRow(), COL_DONE_TIME);
+    if (newStatus === "対応済み") {
+      doneCell.setValue(Utilities.formatDate(new Date(), "Asia/Tokyo", "HH:mm:ss"));
+    } else {
+      doneCell.setValue("");
+    }
+  } catch (err) {
+    Logger.log("onEdit error: " + err);
+  }
+}
+
+// ── 今日の注文履歴を取得（スタッフアプリ用。集計行・見出し行は除外） ─
+// ── お客様の「注文履歴」タブ用：そのテーブルの現在の来店分だけ返す ─
+function getOrders(tableNo) {
+  try {
+    var sheet = getTodaySheet_();
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return { success: true, orders: [] };
+
+    var sheetName = sheet.getName();
+    var currentVisit = getCurrentVisit_(sheetName, tableNo);
+
+    var rows = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues();
+    var orders = rows
+      .filter(function(r) {
+        return r[COL_STATUS-1] !== TITLE_TAG && !isSummaryRow_(r) && r[COL_ITEM-1] !== ""
+          && String(r[COL_TABLE-1]) === String(tableNo)
+          && (Number(r[COL_VISIT-1]) || 1) === currentVisit;
+      })
+      .map(function(r) {
+        var timeVal = r[COL_TIME-1];
+        var timeStr = (timeVal instanceof Date)
+          ? Utilities.formatDate(timeVal, "Asia/Tokyo", "HH:mm:ss")
+          : String(timeVal);
+        return {
+          time: timeStr,
+          name: String(r[COL_ITEM-1]),
+          qty: Number(r[COL_QTY-1]) || 0,
+          amount: Number(r[COL_SUBTOTAL-1]) || 0,
+          status: String(r[COL_STATUS-1])
+        };
+      });
+    return { success: true, orders: orders };
+  } catch (err) {
+    Logger.log("getOrders error: " + err);
+    return { success: false, error: err.toString() };
+  }
+}
+
+function getTodayOrders() {
+  try {
+    var sheet = getTodaySheet_();
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return { success: true, orders: [] };
+
+    var rows = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues();
+    var orders = rows
+      .filter(function(r) { return r[COL_STATUS-1] !== TITLE_TAG && !isSummaryRow_(r) && r[COL_ITEM-1] !== ""; })
+      .map(function(r) {
+        var timeVal = r[COL_TIME-1];
+        var timeStr = (timeVal instanceof Date)
+          ? Utilities.formatDate(timeVal, "Asia/Tokyo", "HH:mm:ss")
+          : String(timeVal);
+        return {
+          time: timeStr,
+          table: String(r[COL_TABLE-1]),
+          name: String(r[COL_ITEM-1]),
+          qty: Number(r[COL_QTY-1]) || 0,
+          subtotal: Number(r[COL_SUBTOTAL-1]) || 0,
+          status: String(r[COL_STATUS-1]),
+          visit: Number(r[COL_VISIT-1]) || 1
+        };
+      });
+    return { success: true, orders: orders };
+  } catch (err) {
+    Logger.log("getTodayOrders error: " + err);
+    return { success: false, error: err.toString() };
+  }
+}
+
+// ── キッチン通知画面からステータスを直接変更する ────────────
+function updateOrderStatus(table, time, name, visit, newStatus) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(30000);
+  } catch (lockErr) {
+    return { success: false, error: "混雑しています。少し待って再度お試しください。" };
+  }
+  try {
+    if (ORDER_STATUS_OPTIONS.indexOf(newStatus) === -1) {
+      return { success: false, error: "不正なステータス: " + newStatus };
+    }
+    var sheet = getTodaySheet_();
+    var lastRow = sheet.getLastRow();
+    if (lastRow < 2) return { success: false, error: "対象の注文が見つかりません" };
+
+    var data = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues();
+    var targetRow = -1;
+    for (var i = 0; i < data.length; i++) {
+      var r = data[i];
+      var rTimeStr = (r[COL_TIME-1] instanceof Date)
+        ? Utilities.formatDate(r[COL_TIME-1], "Asia/Tokyo", "HH:mm:ss")
+        : String(r[COL_TIME-1]);
+      if (rTimeStr === time && String(r[COL_TABLE-1]) === String(table) &&
+          String(r[COL_ITEM-1]) === name && (Number(r[COL_VISIT-1]) || 1) === Number(visit)) {
+        targetRow = i + 2;
+        break;
+      }
+    }
+    if (targetRow < 0) return { success: false, error: "対象の注文が見つかりません" };
+
+    sheet.getRange(targetRow, COL_STATUS).setValue(newStatus);
+    if (newStatus === "対応済み") {
+      sheet.getRange(targetRow, COL_DONE_TIME).setValue(Utilities.formatDate(new Date(), "Asia/Tokyo", "HH:mm:ss"));
+    } else {
+      sheet.getRange(targetRow, COL_DONE_TIME).setValue("");
+    }
+    removeSummaryBlock_(sheet);
+    appendSummaryRows_(sheet); // キャンセル等の変更を集計にも反映
+    return { success: true };
+  } catch (err) {
+    Logger.log("updateOrderStatus error: " + err);
+    return { success: false, error: err.toString() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ============================================================
+// カラオケチャージ管理（Code_22で追加）
+// 仕様: お客様がQRを読み込んで注文画面を開いた時刻を起点に記録
+//       フロント側で 最初の2時間¥1,500 + 以降2時間ごと¥500 を計算
+// 記録キーは「日付+テーブル+来店回」→ 小計行を「お会計済み」にして
+// 来店回が+1されると、次のお客様のチャージは自動的にゼロから始まる
+// ============================================================
+
+function karaKey_(sheetName, table, visit) {
+  return "karaStart_" + sheetName + "_" + String(table) + "_" + visit;
+}
+
+// 注文画面オープン時に呼ばれる（初回のみ記録、以降は既存の時刻を返す）
+function startKaraoke(tableNo) {
+  if (!tableNo) return { success: false, error: "テーブル番号がありません" };
+  var sheetName = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var visit = getCurrentVisit_(sheetName, tableNo);
+  var props = PropertiesService.getDocumentProperties();
+  var key = karaKey_(sheetName, tableNo, visit);
+  var start = props.getProperty(key);
+  if (!start) {
+    start = String(Date.now());
+    props.setProperty(key, start);
+  }
+  return { success: true, startTime: Number(start), guests: getGuests_(sheetName, tableNo, visit) };
+}
+
+// 開始時刻と人数を返す読み取り専用（会計ページ用）
+function getKaraokeInfo(tableNo) {
+  var sheetName = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var visit = getCurrentVisit_(sheetName, tableNo);
+  var start = PropertiesService.getDocumentProperties()
+    .getProperty(karaKey_(sheetName, tableNo, visit));
+  return { success: true, startTime: start ? Number(start) : null,
+           guests: getGuests_(sheetName, tableNo, visit) };
+}
+
+// ============================================================
+// 人数（〇名様）管理（Code_23で追加）
+// 記録キーは「日付+テーブル+来店回」→ カラオケチャージと同様、
+// 小計行を「お会計済み」にして来店回が+1されると自動的にリセットされる
+// ============================================================
+
+function guestsKey_(sheetName, table, visit) {
+  return "guests_" + sheetName + "_" + String(table) + "_" + visit;
+}
+
+function getGuests_(sheetName, table, visit) {
+  var v = PropertiesService.getDocumentProperties()
+    .getProperty(guestsKey_(sheetName, table, visit));
+  return v ? Number(v) : null;   // 未入力は null
+}
+
+// お客様の注文画面（初回モーダル）またはキッチン画面（±補正）から呼ばれる
+function setGuests(tableNo, guests) {
+  if (!tableNo) return { success: false, error: "テーブル番号がありません" };
+  var n = Number(guests);
+  if (!n || n < 1 || n > 20) return { success: false, error: "人数が不正です: " + guests };
+  var sheetName = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var visit = getCurrentVisit_(sheetName, tableNo);
+  PropertiesService.getDocumentProperties()
+    .setProperty(guestsKey_(sheetName, tableNo, visit), String(n));
+  return { success: true, guests: n };
+}
+
+// ============================================================
+// キッチンダッシュボード用の一括取得API（Code_23で追加）
+// 1回の呼び出しで「本日の注文フィード」と「テーブル1〜6のサマリー」を返す
+// tables[n] = { visit, guests, karaStart, orderTotal(現在の来店回・キャンセル除く税込) }
+// ============================================================
+
+var DASHBOARD_TABLES = ["1", "2", "3", "4", "5", "6", "C1", "C2", "C3", "C4", "C5", "C6"];
+
+function getTablesInfo() {
+  try {
+    var sheet = getTodaySheet_();
+    var sheetName = sheet.getName();
+    var props = PropertiesService.getDocumentProperties();
+
+    // テーブルごとの基本情報（来店回・人数・カラオケ開始時刻）
+    var tables = {};
+    DASHBOARD_TABLES.forEach(function(t) {
+      var visit = getCurrentVisit_(sheetName, t);
+      var start = props.getProperty(karaKey_(sheetName, t, visit));
+      tables[t] = {
+        visit: visit,
+        guests: getGuests_(sheetName, t, visit),
+        karaStart: start ? Number(start) : null,
+        orderTotal: 0
+      };
+    });
+
+    // 注文フィード＋現在来店回の注文合計（キャンセル除く）
+    var orders = [];
+    var lastRow = sheet.getLastRow();
+    if (lastRow >= 2) {
+      var rows = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues();
+      rows.forEach(function(r) {
+        if (r[COL_STATUS-1] === TITLE_TAG || isSummaryRow_(r) || r[COL_ITEM-1] === "") return;
+        var timeVal = r[COL_TIME-1];
+        var timeStr = (timeVal instanceof Date)
+          ? Utilities.formatDate(timeVal, "Asia/Tokyo", "HH:mm:ss")
+          : String(timeVal);
+        var o = {
+          time: timeStr,
+          table: String(r[COL_TABLE-1]),
+          name: String(r[COL_ITEM-1]),
+          qty: Number(r[COL_QTY-1]) || 0,
+          subtotal: Number(r[COL_SUBTOTAL-1]) || 0,
+          status: String(r[COL_STATUS-1]),
+          visit: Number(r[COL_VISIT-1]) || 1
+        };
+        orders.push(o);
+        var t = tables[o.table];
+        if (t && o.visit === t.visit && o.status !== "キャンセル") {
+          t.orderTotal += o.subtotal;
+        }
+      });
+    }
+    return { success: true, tables: tables, orders: orders, serverNow: Date.now() };
+  } catch (err) {
+    Logger.log("getTablesInfo error: " + err);
+    return { success: false, error: err.toString() };
+  }
+}
+
+// （任意）現在の来店回のチャージを手動リセット
+// ※通常は小計行を「お会計済み」にすれば自動リセットされるため不要
+function resetKaraokeStart(tableNo) {
+  var sheetName = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var visit = getCurrentVisit_(sheetName, tableNo);
+  PropertiesService.getDocumentProperties()
+    .deleteProperty(karaKey_(sheetName, tableNo, visit));
+}
+// 例: テーブル1をリセット → エディタで下を実行
+function resetTable1() { resetKaraokeStart("1"); }
+
+// ================== 売り切れ管理 ==================
+var SOLD_OUT_PROP = "SOLD_OUT_IDS";
+
+// 売り切れID一覧を取得（未設定時は従来の固定リストを初期値とする）
+function getSoldOut() {
+  var v = PropertiesService.getDocumentProperties().getProperty(SOLD_OUT_PROP);
+  return { success: true, ids: v ? JSON.parse(v) : ["f17", "f17b", "f19"] };
+}
+
+// 売り切れを設定/解除（sold="1"で売り切れ、それ以外で解除）
+function setSoldOut(id, sold) {
+  if (!id) return { success: false, error: "idがありません" };
+  var props = PropertiesService.getDocumentProperties();
+  var v = props.getProperty(SOLD_OUT_PROP);
+  var ids = v ? JSON.parse(v) : ["f17", "f17b", "f19"];
+  var i = ids.indexOf(id);
+  if (sold === "1" && i === -1) ids.push(id);
+  if (sold !== "1" && i !== -1) ids.splice(i, 1);
+  props.setProperty(SOLD_OUT_PROP, JSON.stringify(ids));
+  return { success: true, ids: ids };
+}
+
+// ================== 復旧用ユーティリティ（エディタから実行） ==================
+// 本日の全テーブルのカラオケ開始時刻・人数をリセット（テスト後の掃除用）
+function resetAllTablesToday() {
+  var sheetName = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var props = PropertiesService.getDocumentProperties();
+  DASHBOARD_TABLES.forEach(function(t) {
+    var visit = getCurrentVisit_(sheetName, t);
+    for (var v = 1; v <= visit; v++) {
+      props.deleteProperty(karaKey_(sheetName, t, v));
+      props.deleteProperty(guestsKey_(sheetName, t, v));
+    }
   });
-}
-function setTender(v){
-  var inp = document.getElementById("co-tender");
-  inp.value = (v==="exact" && coBill) ? coBill.grand : v;
-  calcChange();
-}
-function calcChange(){
-  var el = document.getElementById("co-change");
-  if(!coBill){ el.textContent=""; return; }
-  var t = parseInt(document.getElementById("co-tender").value, 10);
-  if(!t){ el.textContent=""; return; }
-  var diff = t - coBill.grand;
-  el.textContent = diff >= 0 ? "お釣り ¥"+diff.toLocaleString() : "不足 ¥"+Math.abs(diff).toLocaleString();
-  el.style.color = diff >= 0 ? "#ffd166" : "#ff6b6b";
+  Logger.log("本日の全テーブルをリセットしました");
 }
 
-// ── レシート印刷（Star PassPRNT / mPOP 58mm・ドロワー連動） ──
-function esc2(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+// 全テーブルの来店回を強制的に+1する（onEditが効かなかった時の復旧用）
+function forceNextVisitAll() {
+  var sheetName = getTodaySheet_().getName();
+  DASHBOARD_TABLES.forEach(function(t) {
+    bumpVisit_(sheetName, t);
+  });
+  Logger.log("全テーブルを次の来店回に進めました");
+}
 
-function buildReceiptHTML(){
-  var b = coBill;
-  var now = new Date();
-  var dt = now.getFullYear()+"/"+(now.getMonth()+1)+"/"+now.getDate()+" "
-         + ("0"+now.getHours()).slice(-2)+":"+("0"+now.getMinutes()).slice(-2);
-  var rows = b.orders.filter(function(o){ return o.status!=="キャンセル"; }).map(function(o){
-    return '<tr><td>'+esc2(o.name)+'</td><td class="c">×'+o.qty+'</td><td class="r">¥'+Number(o.amount).toLocaleString()+'</td></tr>';
-  }).join("");
-  var innerTax = Math.floor(b.grand * 10 / 110);
-  var payRows = "";
-  if(coPay){ payRows += '<tr><td>お支払方法</td><td class="r">'+esc2(coPay)+'</td></tr>'; }
-  if(coPay==="現金"){
-    var t = parseInt(document.getElementById("co-tender").value,10);
-    if(t && t >= b.grand){
-      payRows += '<tr><td>お預り</td><td class="r">¥'+t.toLocaleString()+'</td></tr>';
-      payRows += '<tr><td>お釣り</td><td class="r">¥'+(t-b.grand).toLocaleString()+'</td></tr>';
+// ================== 会計完了API（iPadコンソールから呼ぶ） ==================
+// 小計行を「お会計済み」にし、来店回を+1する。onEditと同じ効果を1回の呼び出しで実行。
+// pay: "現金"/"カード"/"QR" 等。小計行の完了時刻列に記録され、日計の支払方法別集計に使える。
+function checkoutTable(tableNo, pay, detail) {
+  if (!tableNo) return { success: false, error: "テーブル番号がありません" };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var sheet = getTodaySheet_();
+    var sheetName = sheet.getName();
+    var visit = getCurrentVisit_(sheetName, tableNo);
+    var found = false;
+    var lastRow = sheet.getLastRow();
+    if (lastRow >= 2) {
+      var data = sheet.getRange(2, 1, lastRow - 1, ORDER_HEADERS.length).getValues();
+      for (var i = 0; i < data.length; i++) {
+        var r = data[i];
+        if (r[COL_ITEM-1] === SUB_LABEL
+            && String(r[COL_TABLE-1]) === String(tableNo)
+            && (Number(r[COL_VISIT-1]) || 1) === visit) {
+          var rowNum = i + 2;
+          sheet.getRange(rowNum, COL_STATUS).setValue(BILLING_STATUS_PAID);
+          sheet.getRange(rowNum, 1, 1, ORDER_HEADERS.length).setBackground(PAID_BG).setFontColor(PAID_FG);
+          if (pay) {
+            sheet.getRange(rowNum, COL_DONE_TIME).setValue(pay + " " + Utilities.formatDate(new Date(), "Asia/Tokyo", "HH:mm"));
+          }
+          found = true;
+          break;
+        }
+      }
+    }
+    // 会計記録シートへ保存（売上表の元データ。detailはコンソールv7以降から送られる）
+    if (detail && (detail.grand || detail.orderTotal || detail.karaCharge)) {
+      recordSale_(tableNo, visit, detail);
+    }
+
+    // 注文0件（チャージのみ）の場合は小計行がないが、回転は進めてチャージをリセットする
+    bumpVisit_(sheetName, tableNo);
+    return { success: true, table: tableNo, closedVisit: visit, hadSummaryRow: found };
+  } catch (err) {
+    return { success: false, error: String(err) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ================== 来店取消API（誤スキャン対応・コンソールから呼ぶ） ==================
+// 現在の来店回のカラオケ開始時刻・人数のみを消去し、回転数は進めない。
+// 「実際には来店していない」記録をなかったことにする用途。注文がある場合は会計完了を使うこと。
+function resetVisit(tableNo) {
+  if (!tableNo) return { success: false, error: "テーブル番号がありません" };
+  var sheetName = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var visit = getCurrentVisit_(sheetName, tableNo);
+  var props = PropertiesService.getDocumentProperties();
+  props.deleteProperty(karaKey_(sheetName, tableNo, visit));
+  props.deleteProperty(guestsKey_(sheetName, tableNo, visit));
+  return { success: true, table: tableNo, visit: visit };
+}
+
+// ================== 勤怠管理（出勤・退勤の打刻） ==================
+var SHIFT_SHEET_NAME = "勤怠";
+
+function getShiftSheet_() {
+  var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  var sh = ss.getSheetByName(SHIFT_SHEET_NAME);
+  if (!sh) {
+    sh = ss.insertSheet(SHIFT_SHEET_NAME);
+    sh.getRange(1, 1, 1, 4).setValues([["日付", "名前", "出勤時刻", "退勤時刻"]])
+      .setFontWeight("bold").setBackground("#2E7D32").setFontColor("#FFFFFF");
+    sh.setColumnWidths(1, 4, 110);
+    // 時刻列は文字列扱いにして 1899/12/30 問題を回避
+    sh.getRange("A:A").setNumberFormat("@");
+    sh.getRange("C:D").setNumberFormat("@");
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function shiftFmt_(v) {
+  if (!v) return "";
+  if (v instanceof Date) return Utilities.formatDate(v, "Asia/Tokyo", "HH:mm");
+  return String(v);
+}
+
+// 打刻。type: "in"=出勤 / "out"=退勤
+function punchClock(name, type) {
+  if (!name) return { success: false, error: "名前がありません" };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var sh = getShiftSheet_();
+    var today = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+    var now = Utilities.formatDate(new Date(), "Asia/Tokyo", "HH:mm");
+    var last = sh.getLastRow();
+    if (type === "in") {
+      sh.appendRow([today, name, now, ""]);
+      return { success: true, name: name, type: "in", time: now };
+    }
+    // 退勤：本日の自分の未退勤行を下から探して埋める
+    if (last >= 2) {
+      var data = sh.getRange(2, 1, last - 1, 4).getValues();
+      for (var i = data.length - 1; i >= 0; i--) {
+        var d = data[i];
+        var dstr = (d[0] instanceof Date) ? Utilities.formatDate(d[0], "Asia/Tokyo", "yyyy-MM-dd") : String(d[0]);
+        if (dstr === today && String(d[1]) === name && !d[3]) {
+          sh.getRange(i + 2, 4).setValue(now);
+          return { success: true, name: name, type: "out", time: now };
+        }
+      }
+    }
+    // 出勤打刻漏れでも退勤時刻は残す
+    sh.appendRow([today, name, "", now]);
+    return { success: true, name: name, type: "out", time: now, note: "出勤記録なし" };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 本日の勤怠一覧（コンソール表示用）
+function getTodayShifts() {
+  var sh = getShiftSheet_();
+  var today = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var last = sh.getLastRow();
+  var out = [];
+  if (last >= 2) {
+    var data = sh.getRange(2, 1, last - 1, 4).getValues();
+    for (var i = 0; i < data.length; i++) {
+      var d = data[i];
+      var dstr = (d[0] instanceof Date) ? Utilities.formatDate(d[0], "Asia/Tokyo", "yyyy-MM-dd") : String(d[0]);
+      if (dstr === today) {
+        out.push({ name: String(d[1]), tin: shiftFmt_(d[2]), tout: shiftFmt_(d[3]) });
+      }
     }
   }
-  return '<html><head><meta charset="utf-8"><style>'
-    +'body{font-family:sans-serif;width:384px;margin:0;padding:0;font-size:22px;color:#000}'
-    +'.center{text-align:center}.big{font-size:28px;font-weight:bold}'
-    +'table{width:100%;border-collapse:collapse}td{padding:2px 0;vertical-align:top}'
-    +'.c{text-align:center;width:60px}.r{text-align:right;width:110px}'
-    +'.line{border-top:1px dashed #000;margin:6px 0}'
-    +'.grand{font-size:28px;font-weight:bold}'
-    +'</style></head><body>'
-    +'<div class="center big">'+esc2(STORE_NAME)+'</div>'
-    +'<div class="center">御会計伝票</div>'
-    +'<div class="line"></div>'
-    +'<div>テーブル: '+esc2(coTable)+(b.karaGuests ? '　'+b.karaGuests+'名様' : '')+'</div>'
-    +'<div>'+dt+'</div>'
-    +'<div class="line"></div>'
-    +'<table>'+rows+'</table>'
-    +'<div class="line"></div>'
-    +'<table>'
-    +'<tr><td>ご注文合計（税込）</td><td class="r">¥'+b.orderTotal.toLocaleString()+'</td></tr>'
-    +'<tr><td>カラオケチャージ<br><span style="font-size:18px">'+esc2(b.karaLabel)+'</span></td><td class="r">¥'+b.karaCharge.toLocaleString()+'</td></tr>'
-    +'<tr><td class="grand">合計</td><td class="r grand">¥'+b.grand.toLocaleString()+'</td></tr>'
-    +'<tr><td>（内消費税相当額）</td><td class="r">¥'+innerTax.toLocaleString()+'</td></tr>'
-    + payRows
-    +'</table>'
-    +'<div class="line"></div>'
-    +'<div class="center">ご来店ありがとうございました🎤</div>'
-    +'</body></html>';
+  return { success: true, shifts: out };
 }
 
-function passprnt(html, withDrawer){
-  var back = encodeURIComponent(location.href.split("#")[0]);
-  var url = "starpassprnt://v1/print/nopreview?back=" + back + "&size=2"
-          + (withDrawer ? "&drawer=start" : "")
-          + "&html=" + encodeURIComponent(html);
-  location.href = url;
-}
+// ================== 仕入発注管理 ==================
+var PURCHASE_MASTER_SHEET = "発注マスタ";
+var PURCHASE_LOG_SHEET = "仕入発注";
 
-function printReceipt(){
-  if(!coBill){ alert("先にテーブルを選択してください"); return; }
-  passprnt(buildReceiptHTML(), true);  // 印刷と同時にドロワーを開く
-}
-
-function openDrawer(){
-  // 最小の印字でドロワーのみ開く（PassPRNTは印刷コマンド経由でドロワーを駆動）
-  var html = '<html><head><meta charset="utf-8"></head><body style="width:384px;margin:0;font-size:10px;color:#fff">.</body></html>';
-  passprnt(html, true);
-}
-
-function printTest(){
-  var html = '<html><head><meta charset="utf-8"></head>'
-    + '<body style="width:384px;margin:0;padding:0;font-size:24px;color:#000;font-family:sans-serif">'
-    + '<div style="text-align:center;font-weight:bold">テスト印刷</div>'
-    + '<div style="text-align:center">MATSUTAKE</div>'
-    + '<div style="text-align:center">1 2 3</div>'
-    + '</body></html>';
-  passprnt(html, false);
-}
-
-// ── 会計完了 ──
-function doCheckout(){
-  if(!coTable || !coBill){ alert("先にテーブルを選択してください"); return; }
-  var payLabel = coPay || "未選択";
-  if(!confirm("テーブル"+coTable+" を会計完了にしますか？\n合計 ¥"+coBill.grand.toLocaleString()+"（"+payLabel+"）\n※回転が進み、チャージ・人数はリセットされます")) return;
-  var btn = document.getElementById("co-done");
-  btn.disabled = true; btn.textContent = "処理中...";
-  fetch(GAS_WEBAPP_URL+"?action=checkoutTable&table="+encodeURIComponent(coTable)+"&pay="+encodeURIComponent(coPay||""))
-    .then(function(r){ return r.json(); })
-    .then(function(res){
-      if(res && res.success){
-        alert("テーブル"+coTable+" の会計を完了しました");
-        coPay = null; renderPay();
-        document.getElementById("co-cash").style.display = "none";
-        document.getElementById("co-tender").value = "";
-        loadBill();
-      } else {
-        alert("会計処理に失敗しました: "+(res&&res.error||"不明なエラー"));
-      }
-    })
-    .catch(function(e){ alert("通信エラー: "+e); })
-    .finally(function(){ btn.disabled=false; btn.textContent="✅ 会計完了"; });
-}
-
-// ── 来店取消（誤スキャンなどで実際には不在のとき） ──
-function resetVisit(){
-  if(!coTable || !coBill){ alert("先にテーブルを選択してください"); return; }
-  // 注文がある卓は誤操作防止のためブロック（実来店の可能性が高い）
-  if(coBill.orders.length > 0){
-    alert("このテーブルには注文が入っています。\n来店取消は使えません。\n・実来店なら「✅会計完了」で締めてください\n・誤注文ならキッチンタブでキャンセルしてから再度お試しください");
-    return;
+// 発注マスタ（業者ごとの定番品リスト）。シートを直接編集して品目を管理する
+function getPurchaseMasterSheet_() {
+  var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  var sh = ss.getSheetByName(PURCHASE_MASTER_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(PURCHASE_MASTER_SHEET);
+    sh.getRange(1, 1, 1, 3).setValues([["業者", "品名", "単位"]])
+      .setFontWeight("bold").setBackground("#1565C0").setFontColor("#FFFFFF");
+    // 初期データ：酒屋＝ドリンクメニュー全品目／ミクリード＝見本（実品名に書き換え可。行の追加・削除も自由）
+    sh.getRange(2, 1, 54, 3).setValues([
+      ["酒屋", "キリン一番搾り", ""],
+      ["酒屋", "スプリングバレー 豊潤ラガー", ""],
+      ["酒屋", "よなよなエール", ""],
+      ["酒屋", "インドの青鬼", ""],
+      ["酒屋", "スプリングバレー JAPANエール 香", ""],
+      ["酒屋", "コロナエキストラ", ""],
+      ["酒屋", "スーパードライ", ""],
+      ["酒屋", "角ハイボール", ""],
+      ["酒屋", "陸ハイボール", ""],
+      ["酒屋", "ジムビームハイボール", ""],
+      ["酒屋", "ジンジャーハイボール", ""],
+      ["酒屋", "ジャックDハイボール", ""],
+      ["酒屋", "ワイルドターキーハイボール", ""],
+      ["酒屋", "コークハイ", ""],
+      ["酒屋", "翠ジン・ソーダ", ""],
+      ["酒屋", "こだわり酒場のレモンサワー", ""],
+      ["酒屋", "グレープフルーツサワー", ""],
+      ["酒屋", "パイナップルサワー", ""],
+      ["酒屋", "カルピスサワー", ""],
+      ["酒屋", "男梅サワー", ""],
+      ["酒屋", "緑茶ハイ", ""],
+      ["酒屋", "ウーロンハイ", ""],
+      ["酒屋", "JJ", ""],
+      ["酒屋", "黒霧島（芋）", ""],
+      ["酒屋", "鍛高譚（しそ）", ""],
+      ["酒屋", "吉四六（麦）", ""],
+      ["酒屋", "鳥飼（米）", ""],
+      ["酒屋", "クライナー", "本"],
+      ["酒屋", "クエルボ", "本"],
+      ["酒屋", "イエガー", "本"],
+      ["酒屋", "コカボム", "本"],
+      ["酒屋", "ワイルドターキー", "本"],
+      ["酒屋", "吉四六 ボトル", "本"],
+      ["酒屋", "鳥飼 ボトル", "本"],
+      ["酒屋", "茜霧島", "本"],
+      ["酒屋", "角 ボトル", "本"],
+      ["酒屋", "黒霧島 ボトル", "本"],
+      ["酒屋", "いいちこ ボトル", "本"],
+      ["酒屋", "金宮 ボトル", "本"],
+      ["酒屋", "氷", ""],
+      ["酒屋", "ミネラルウォーター", ""],
+      ["酒屋", "緑茶", ""],
+      ["酒屋", "紅茶", ""],
+      ["酒屋", "烏龍茶", ""],
+      ["酒屋", "炭酸水", ""],
+      ["酒屋", "ジャスミン茶", ""],
+      ["酒屋", "オレンジ", ""],
+      ["酒屋", "コーラ", ""],
+      ["酒屋", "カルピス", ""],
+      ["酒屋", "ジンジャエール", ""],
+      ["ミクリード", "若鶏から揚げ（冷凍）1kg", "袋"],
+      ["ミクリード", "えだまめ（冷凍）500g", "袋"],
+      ["ミクリード", "ソース焼きそば麺（冷蔵）", "袋"],
+      ["ミクリード", "キムチ（冷蔵）1kg", "個"]
+    ]);
+    sh.setColumnWidths(1, 3, 160);
+    sh.setColumnWidth(2, 260);
+    sh.setFrozenRows(1);
   }
-  if(!confirm("テーブル"+coTable+" の来店記録を取り消しますか？\n（カラオケ計時・人数を消去します。回転数は進みません）")) return;
-  fetch(GAS_WEBAPP_URL+"?action=resetVisit&table="+encodeURIComponent(coTable))
-    .then(function(r){ return r.json(); })
-    .then(function(res){
-      if(res && res.success){
-        alert("テーブル"+coTable+" の来店記録を取り消しました");
-        loadBill();
-      } else {
-        alert("取消に失敗しました: "+(res&&res.error||"不明なエラー"));
-      }
-    })
-    .catch(function(e){ alert("通信エラー: "+e); });
+  return sh;
 }
 
-</script>
-</body>
-</html>
+function getPurchaseMaster() {
+  var sh = getPurchaseMasterSheet_();
+  var last = sh.getLastRow();
+  var suppliers = {};
+  var order = [];
+  if (last >= 2) {
+    var data = sh.getRange(2, 1, last - 1, 3).getValues();
+    for (var i = 0; i < data.length; i++) {
+      var sup = String(data[i][0]).trim();
+      var name = String(data[i][1]).trim();
+      var unit = String(data[i][2]).trim();
+      if (!sup || !name) continue;
+      if (!suppliers[sup]) { suppliers[sup] = []; order.push(sup); }
+      suppliers[sup].push({ name: name, unit: unit });
+    }
+  }
+  return { success: true, suppliers: suppliers, order: order };
+}
+
+// 発注記録シート
+function getPurchaseLogSheet_() {
+  var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  var sh = ss.getSheetByName(PURCHASE_LOG_SHEET);
+  if (!sh) {
+    sh = ss.insertSheet(PURCHASE_LOG_SHEET);
+    sh.getRange(1, 1, 1, 8).setValues([["発注日", "時刻", "業者", "品名", "数量", "単位", "状態", "入荷日時"]])
+      .setFontWeight("bold").setBackground("#6A1B9A").setFontColor("#FFFFFF");
+    sh.getRange("A:B").setNumberFormat("@");
+    sh.getRange("H:H").setNumberFormat("@");
+    sh.setColumnWidth(4, 260);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+// 発注の記録。data = { supplier, items:[{name, qty, unit}] }
+function submitPurchase(data) {
+  if (!data || !data.supplier || !data.items || !data.items.length) {
+    return { success: false, error: "発注内容がありません" };
+  }
+  var lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    var sh = getPurchaseLogSheet_();
+    var today = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+    var now = Utilities.formatDate(new Date(), "Asia/Tokyo", "HH:mm");
+    var rows = data.items.map(function(it) {
+      return [today, now, String(data.supplier), String(it.name),
+              Number(it.qty) || 1, String(it.unit || ""), "発注済み", ""];
+    });
+    sh.getRange(sh.getLastRow() + 1, 1, rows.length, 8).setValues(rows);
+    return { success: true, count: rows.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 直近の発注一覧（最大60行・新しい順）
+function getRecentPurchases() {
+  var sh = getPurchaseLogSheet_();
+  var last = sh.getLastRow();
+  var out = [];
+  if (last >= 2) {
+    var start = Math.max(2, last - 59);
+    var data = sh.getRange(start, 1, last - start + 1, 8).getValues();
+    for (var i = data.length - 1; i >= 0; i--) {
+      var d = data[i];
+      out.push({
+        row: start + i,
+        date: String(d[0]), time: String(d[1]), supplier: String(d[2]),
+        name: String(d[3]), qty: Number(d[4]) || 0, unit: String(d[5]),
+        status: String(d[6]), received: String(d[7])
+      });
+    }
+  }
+  return { success: true, purchases: out };
+}
+
+// 入荷済みにする
+function markPurchaseReceived(row) {
+  var sh = getPurchaseLogSheet_();
+  if (!row || row < 2 || row > sh.getLastRow()) {
+    return { success: false, error: "行が見つかりません" };
+  }
+  var now = Utilities.formatDate(new Date(), "Asia/Tokyo", "MM/dd HH:mm");
+  sh.getRange(row, 7).setValue("入荷済み");
+  sh.getRange(row, 8).setValue(now);
+  return { success: true, row: row, received: now };
+}
+
+// ================== 会計記録（売上台帳） ==================
+var SALES_SHEET_NAME = "会計記録";
+
+function getSalesSheet_() {
+  var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+  var sh = ss.getSheetByName(SALES_SHEET_NAME);
+  if (!sh) {
+    sh = ss.insertSheet(SALES_SHEET_NAME);
+    sh.getRange(1, 1, 1, 10).setValues([["日付", "時刻", "卓", "回転", "人数", "注文計", "チャージ", "合計", "支払方法", "担当"]])
+      .setFontWeight("bold").setBackground("#B71C1C").setFontColor("#FFFFFF");
+    sh.getRange("A:B").setNumberFormat("@");
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+function recordSale_(tableNo, visit, d) {
+  var sh = getSalesSheet_();
+  var today = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var now = Utilities.formatDate(new Date(), "Asia/Tokyo", "HH:mm");
+  sh.appendRow([today, now, String(tableNo), visit, d.guests || "",
+                d.orderTotal || 0, d.karaCharge || 0, d.grand || 0,
+                d.payMethod || "", d.staff || ""]);
+}
+
+// ================== 売上レポート ==================
+// date: "yyyy-MM-dd"（省略時は本日）
+function getSalesReport(dateStr) {
+  var date = dateStr || Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy-MM-dd");
+  var ss = SpreadsheetApp.openById(CONFIG.SHEET_ID);
+
+  // --- 会計記録から集計（総売上・支払方法別・客数） ---
+  var total = 0, orderTotal = 0, karaTotal = 0, guests = 0, count = 0;
+  var byPay = {};
+  var salesSh = ss.getSheetByName(SALES_SHEET_NAME);
+  if (salesSh && salesSh.getLastRow() >= 2) {
+    var sdata = salesSh.getRange(2, 1, salesSh.getLastRow() - 1, 10).getValues();
+    for (var i = 0; i < sdata.length; i++) {
+      var r = sdata[i];
+      var dstr = (r[0] instanceof Date) ? Utilities.formatDate(r[0], "Asia/Tokyo", "yyyy-MM-dd") : String(r[0]);
+      if (dstr !== date) continue;
+      count++;
+      guests += Number(r[4]) || 0;
+      orderTotal += Number(r[5]) || 0;
+      karaTotal += Number(r[6]) || 0;
+      total += Number(r[7]) || 0;
+      var pm = String(r[8]) || "未記録";
+      byPay[pm] = (byPay[pm] || 0) + (Number(r[7]) || 0);
+    }
+  }
+
+  // --- 日別シートから品目ランキング（キャンセル除く） ---
+  var items = [];
+  var daySh = ss.getSheetByName(date);
+  if (daySh && daySh.getLastRow() >= 2) {
+    var agg = {};
+    var ddata = daySh.getRange(2, 1, daySh.getLastRow() - 1, ORDER_HEADERS.length).getValues();
+    for (var j = 0; j < ddata.length; j++) {
+      var row = ddata[j];
+      var name = String(row[COL_ITEM-1]);
+      var status = String(row[COL_STATUS-1]);
+      if (!name || name === SUB_LABEL || name === TOTAL_LABEL) continue;
+      if (status === TITLE_TAG || status === "キャンセル") continue;
+      if (!agg[name]) agg[name] = { name: name, qty: 0, amount: 0 };
+      agg[name].qty += Number(row[COL_QTY-1]) || 0;
+      agg[name].amount += Number(row[COL_SUBTOTAL-1]) || 0;
+    }
+    items = Object.keys(agg).map(function(k){ return agg[k]; });
+    items.sort(function(a, b){ return b.amount - a.amount; });
+    items = items.slice(0, 15);
+  }
+
+  return { success: true, date: date, count: count, guests: guests,
+           orderTotal: orderTotal, karaTotal: karaTotal, total: total,
+           byPay: byPay, items: items,
+           hasDaySheet: !!daySh, hasSales: count > 0 };
+}
