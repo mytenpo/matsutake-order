@@ -148,16 +148,44 @@
   .pu-hrow .hn{ flex:1; }
   .pu-recv{ padding:8px 12px; border-radius:9px; border:none; background:#12b76a; color:#fff; font-size:12.5px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap; }
   .pu-done{ color:#4ade80; font-size:12.5px; white-space:nowrap; }
+  .sa-datebar{ display:flex; align-items:center; gap:8px; }
+  .sa-datebar .co-qbtn{ flex:0 0 auto; padding:10px 14px; margin:0; }
+  .sa-date{ flex:1; text-align:center; font-size:18px; font-weight:800; color:#00d4ff; }
+  .sa-cards{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
+  .sa-card{ background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:13px; padding:12px 8px; text-align:center; }
+  .sa-card .lb{ font-size:12px; color:#999; }
+  .sa-card .vl{ font-size:21px; font-weight:900; color:#fff; margin-top:2px; }
+  .sa-card.main .vl{ color:#ff2d78; font-size:24px; }
+  .sa-sec{ font-size:14px; color:#999; margin:16px 0 6px; font-weight:600; }
+  .sa-row{ display:flex; justify-content:space-between; padding:6px 4px; font-size:14.5px; border-bottom:1px dashed rgba(255,255,255,.08); }
+  .sa-row .r{ font-weight:700; }
+  .sa-rank{ display:flex; align-items:center; gap:8px; padding:6px 4px; font-size:14px; border-bottom:1px dashed rgba(255,255,255,.08); }
+  .sa-rank .no{ width:26px; color:#ffd166; font-weight:800; }
+  .sa-rank .nm{ flex:1; }
+  .sa-rank .qt{ width:52px; text-align:right; color:#888; }
+  .sa-rank .am{ width:84px; text-align:right; font-weight:700; }
+  .tr-chart{ display:flex; align-items:flex-end; gap:4px; height:150px; padding:8px 2px 0;
+    background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius:13px; }
+  .tr-col{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end;
+    height:100%; cursor:pointer; min-width:0; }
+  .tr-val{ font-size:9.5px; color:#aaa; margin-bottom:2px; white-space:nowrap; }
+  .tr-bar{ width:70%; min-height:2px; border-radius:4px 4px 0 0; background:linear-gradient(180deg,#ff6ba0,#ff2d78); }
+  .tr-col.sel .tr-bar{ background:linear-gradient(180deg,#7fdcff,#00d4ff); }
+  .tr-col.zero .tr-bar{ background:rgba(255,255,255,.12); }
+  .tr-day{ font-size:10px; color:#888; margin-top:4px; white-space:nowrap; }
+  .tr-day.sat{ color:#7fb5ff; } .tr-day.sun{ color:#ff8a8e; }
+  .tr-col.sel .tr-day{ color:#00d4ff; font-weight:800; }
 
   </style>
 </head>
 <body>
-  <div class="header">🎤 MATUTAKE コンソール <span style="font-size:13px;opacity:.6;">v6</span>
+  <div class="header">🎤 MATUTAKE コンソール <span style="font-size:13px;opacity:.6;">v9</span>
     <div class="nav">
       <button class="nav-btn active" id="nav-kitchen" onclick="showView('kitchen')">🍳 キッチン</button>
       <button class="nav-btn" id="nav-checkout" onclick="showView('checkout')">💴 会計</button>
       <button class="nav-btn" id="nav-shift" onclick="showView('shift')">👥 勤怠</button>
       <button class="nav-btn" id="nav-purchase" onclick="showView('purchase')">📦 発注</button>
+      <button class="nav-btn" id="nav-sales" onclick="showView('sales')">📊 売上</button>
     </div>
   </div>
   <div id="view-kitchen">
@@ -260,6 +288,23 @@
       <button class="co-reload" onclick="puLoadHistory()">🔄 履歴を再読み込み</button>
     </div>
   </div><!-- /view-purchase -->
+
+  <!-- ═══════════ 売上ビュー ═══════════ -->
+  <div id="view-sales" style="display:none;">
+    <div class="co-wrap">
+      <div class="sa-datebar">
+        <button class="co-qbtn" onclick="saShift(-1)">◀ 前日</button>
+        <div class="sa-date" id="sa-date"></div>
+        <button class="co-qbtn" onclick="saShift(1)">翌日 ▶</button>
+      </div>
+      <div class="sa-sec" style="margin-top:12px">日別売上（直近14日・棒をタップで表示切替）</div>
+      <div class="tr-chart" id="tr-chart"><div class="co-empty">読み込み中...</div></div>
+      <div id="sa-body"><div class="co-empty">読み込み中...</div></div>
+      <button class="co-print" style="background:linear-gradient(135deg,#B71C1C,#E53935)" onclick="printZReport()">🖨 精算レシート印刷（日計）</button>
+      <button class="co-reload" onclick="saTrend=null; saLoad()">🔄 再読み込み</button>
+      <div class="co-empty" style="padding:8px 0;font-size:12px">※チャージ・支払方法・担当はコンソールv7以降の会計分から集計されます</div>
+    </div>
+  </div><!-- /view-sales -->
 
 <script>
 var enabled = false;
@@ -556,12 +601,15 @@ function showView(v){
   document.getElementById("view-checkout").style.display = (v==="checkout") ? "" : "none";
   document.getElementById("view-shift").style.display    = (v==="shift")    ? "" : "none";
   document.getElementById("view-purchase").style.display = (v==="purchase") ? "" : "none";
+  document.getElementById("view-sales").style.display    = (v==="sales")    ? "" : "none";
   document.getElementById("nav-kitchen").className  = "nav-btn"+(v==="kitchen"?" active":"");
   document.getElementById("nav-checkout").className = "nav-btn"+(v==="checkout"?" active":"");
   document.getElementById("nav-shift").className    = "nav-btn"+(v==="shift"?" active":"");
   document.getElementById("nav-purchase").className = "nav-btn"+(v==="purchase"?" active":"");
+  document.getElementById("nav-sales").className    = "nav-btn"+(v==="sales"?" active":"");
   if(v==="shift") loadShifts();
   if(v==="purchase") puInit();
+  if(v==="sales") saLoad();
   // 他ビューを開いてもポーリング・受信音は継続する（同一ページのため）
 }
 
@@ -824,7 +872,14 @@ function doCheckout(){
   var btn = document.getElementById("co-done");
   btn.disabled = true; btn.textContent = "処理中...";
     var payRecord = (coPay||"") + (coStaff ? (coPay?"・":"") + coStaff : "");
-  fetch(GAS_WEBAPP_URL+"?action=checkoutTable&table="+encodeURIComponent(coTable)+"&pay="+encodeURIComponent(payRecord))
+  var q = "&pay=" + encodeURIComponent(payRecord)
+        + "&payMethod=" + encodeURIComponent(coPay||"")
+        + "&staff=" + encodeURIComponent(coStaff||"")
+        + "&order=" + coBill.orderTotal
+        + "&kara=" + coBill.karaCharge
+        + "&grand=" + coBill.grand
+        + "&guests=" + (coBill.karaGuests||0);
+  fetch(GAS_WEBAPP_URL+"?action=checkoutTable&table="+encodeURIComponent(coTable)+q)
     .then(function(r){ return r.json(); })
     .then(function(res){
       if(res && res.success){
@@ -995,6 +1050,170 @@ function puRecv(row){
       if(res && res.success) puLoadHistory();
       else alert("更新に失敗しました");
     }).catch(function(){ alert("通信エラー"); });
+}
+
+
+// ═══════════════════ 売上ビュー ═══════════════════
+var saDate = null;  // yyyy-MM-dd
+
+function saToday(){
+  var d = new Date(Date.now() + clockOffset);
+  var jst = new Date(d.toLocaleString("en-US",{timeZone:"Asia/Tokyo"}));
+  return jst.getFullYear()+"-"+("0"+(jst.getMonth()+1)).slice(-2)+"-"+("0"+jst.getDate()).slice(-2);
+}
+
+function saShift(days){
+  var d = new Date(saDate+"T00:00:00");
+  d.setDate(d.getDate()+days);
+  saDate = d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+  saLoad(true);
+}
+
+var saTrend = null;
+
+function saLoadTrend(){
+  fetch(GAS_WEBAPP_URL+"?action=getSalesTrend&days=14")
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(res && res.success){ saTrend = res.days || []; renderTrend(); }
+      else document.getElementById("tr-chart").innerHTML = '<div class="co-empty err">取得失敗</div>';
+    })
+    .catch(function(){ document.getElementById("tr-chart").innerHTML = '<div class="co-empty err">通信エラー</div>'; });
+}
+
+function renderTrend(){
+  if(!saTrend || !saTrend.length){
+    document.getElementById("tr-chart").innerHTML = '<div class="co-empty">データなし</div>';
+    return;
+  }
+  var max = 0;
+  saTrend.forEach(function(d){ if(d.total > max) max = d.total; });
+  document.getElementById("tr-chart").innerHTML = saTrend.map(function(d){
+    var hpx = max > 0 ? Math.max(2, Math.round(d.total / max * 100)) : 2;
+    var day = d.date.slice(8);                 // "13"
+    var mon = d.date.slice(5,7);
+    var label = (day === "01" || d.date === saTrend[0].date) ? (Number(mon)+"/"+Number(day)) : Number(day);
+    var dowCls = d.dow === 6 ? " sat" : (d.dow === 7 ? " sun" : "");
+    var sel = (d.date === saDate) ? " sel" : "";
+    var zero = d.total === 0 ? " zero" : "";
+    var val = d.total > 0 ? "¥" + (d.total >= 10000 ? (Math.round(d.total/1000)/10) + "万" : d.total.toLocaleString()) : "";
+    return '<div class="tr-col'+sel+zero+'" onclick="saPick(\''+d.date+'\')">'
+      + '<div class="tr-val">'+val+'</div>'
+      + '<div class="tr-bar" style="height:'+hpx+'px"></div>'
+      + '<div class="tr-day'+dowCls+'">'+label+'</div>'
+      + '</div>';
+  }).join("");
+}
+
+function saPick(date){
+  saDate = date;
+  saLoad(true);
+}
+
+function saLoad(keepDate){
+  if(!keepDate || !saDate) saDate = saDate && keepDate ? saDate : saToday();
+  document.getElementById("sa-date").textContent = saDate + (saDate===saToday()?"（本日）":"");
+  document.getElementById("sa-body").innerHTML = '<div class="co-empty">読み込み中...</div>';
+  fetch(GAS_WEBAPP_URL+"?action=getSalesReport&date="+encodeURIComponent(saDate))
+    .then(function(r){ return r.json(); })
+    .then(function(res){
+      if(!res || !res.success){ document.getElementById("sa-body").innerHTML = '<div class="co-empty err">取得に失敗しました</div>'; return; }
+      renderSales(res);
+    })
+    .catch(function(){ document.getElementById("sa-body").innerHTML = '<div class="co-empty err">通信エラー</div>'; });
+  if(saTrend) renderTrend(); else saLoadTrend();
+}
+
+var saLastReport = null;
+
+function printZReport(){
+  var d = saLastReport;
+  if(!d || (!d.hasSales && !d.hasDaySheet)){ alert("この日の売上データがありません"); return; }
+  var now = new Date(Date.now() + clockOffset);
+  var issued = (now.getMonth()+1)+"/"+now.getDate()+" "+("0"+now.getHours()).slice(-2)+":"+("0"+now.getMinutes()).slice(-2);
+  var innerTax = Math.floor(d.total * 10 / 110);
+
+  var payRows = "";
+  Object.keys(d.byPay).forEach(function(p){
+    payRows += '<tr><td>'+esc2(p||"未記録")+'</td><td class="r">¥'+d.byPay[p].toLocaleString()+'</td></tr>';
+  });
+  if(!payRows) payRows = '<tr><td colspan="2">（支払方法の記録なし）</td></tr>';
+
+  var topRows = "";
+  (d.items||[]).slice(0,5).forEach(function(it, i){
+    topRows += '<tr><td>'+(i+1)+'. '+esc2(it.name)+'</td><td class="c">×'+it.qty+'</td><td class="r">¥'+it.amount.toLocaleString()+'</td></tr>';
+  });
+
+  var html = '<html><head><meta charset="utf-8"><style>'
+    +'body{font-family:sans-serif;width:384px;margin:0;padding:0;font-size:22px;color:#000}'
+    +'.center{text-align:center}.big{font-size:28px;font-weight:bold}'
+    +'.huge{font-size:32px;font-weight:bold}'
+    +'table{width:100%;border-collapse:collapse}td{padding:2px 0;vertical-align:top}'
+    +'.c{text-align:center;width:60px}.r{text-align:right;width:120px}'
+    +'.line{border-top:1px dashed #000;margin:6px 0}'
+    +'.dline{border-top:2px solid #000;margin:6px 0}'
+    +'</style></head><body>'
+    +'<div class="center big">'+esc2(STORE_NAME)+'</div>'
+    +'<div class="center big">◆ 精算レシート（日計）◆</div>'
+    +'<div class="line"></div>'
+    +'<div>対象日: '+esc2(d.date)+'</div>'
+    +'<div>発行: '+issued+'</div>'
+    +'<div class="dline"></div>'
+    +'<table>'
+    +'<tr><td class="big">総売上</td><td class="r huge">¥'+d.total.toLocaleString()+'</td></tr>'
+    +'<tr><td>会計件数</td><td class="r">'+d.count+'件</td></tr>'
+    +'<tr><td>来店人数</td><td class="r">'+d.guests+'名</td></tr>'
+    +'</table>'
+    +'<div class="line"></div>'
+    +'<table>'
+    +'<tr><td>ご注文売上</td><td class="r">¥'+d.orderTotal.toLocaleString()+'</td></tr>'
+    +'<tr><td>カラオケチャージ</td><td class="r">¥'+d.karaTotal.toLocaleString()+'</td></tr>'
+    +'<tr><td>（内消費税相当額）</td><td class="r">¥'+innerTax.toLocaleString()+'</td></tr>'
+    +'</table>'
+    +'<div class="dline"></div>'
+    +'<div class="big">支払方法別</div>'
+    +'<table>'+payRows+'</table>'
+    +'<div class="dline"></div>'
+    +(topRows ? '<div class="big">品目トップ5</div><table>'+topRows+'</table><div class="line"></div>' : '')
+    +'<div class="center">以上</div>'
+    +'</body></html>';
+
+  // ドロワーも開く（現金実査のため）
+  passprnt(html, true);
+}
+
+function renderSales(d){
+  saLastReport = d;
+  if(!d.hasDaySheet && !d.hasSales){
+    document.getElementById("sa-body").innerHTML = '<div class="co-empty">この日のデータはありません</div>';
+    return;
+  }
+  var html = '<div class="sa-cards">'
+    + '<div class="sa-card main"><div class="lb">総売上</div><div class="vl">¥'+d.total.toLocaleString()+'</div></div>'
+    + '<div class="sa-card"><div class="lb">会計数</div><div class="vl">'+d.count+'件</div></div>'
+    + '<div class="sa-card"><div class="lb">来店人数</div><div class="vl">'+d.guests+'名</div></div>'
+    + '</div>';
+
+  html += '<div class="sa-sec">内訳</div>'
+    + '<div class="sa-row"><span>ご注文売上</span><span class="r">¥'+d.orderTotal.toLocaleString()+'</span></div>'
+    + '<div class="sa-row"><span>カラオケチャージ</span><span class="r">¥'+d.karaTotal.toLocaleString()+'</span></div>';
+
+  var pays = Object.keys(d.byPay);
+  if(pays.length){
+    html += '<div class="sa-sec">支払方法別</div>';
+    pays.forEach(function(p){
+      html += '<div class="sa-row"><span>'+(p||"未記録")+'</span><span class="r">¥'+d.byPay[p].toLocaleString()+'</span></div>';
+    });
+  }
+
+  if(d.items && d.items.length){
+    html += '<div class="sa-sec">品目ランキング（金額順・キャンセル除く）</div>';
+    d.items.forEach(function(it, i){
+      html += '<div class="sa-rank"><span class="no">'+(i+1)+'</span><span class="nm">'+it.name+'</span>'
+        + '<span class="qt">×'+it.qty+'</span><span class="am">¥'+it.amount.toLocaleString()+'</span></div>';
+    });
+  }
+  document.getElementById("sa-body").innerHTML = html;
 }
 
 </script>
