@@ -47,7 +47,7 @@ textarea.inp{min-height:72px;resize:vertical}
 </style>
 </head>
 <body>
-<div class="hdr"><b>📣 MATUTAKE メディアツール</b><small>SNS・広報管理 v1</small></div>
+<div class="hdr"><b>📣 MATUTAKE メディアツール</b><small>SNS・広報管理 v1.1</small></div>
 <div class="wrap">
   <div class="sec">✏ 新しいネタ・投稿予定を追加</div>
   <div class="mgrid" id="media-grid"></div>
@@ -125,11 +125,11 @@ function render(){
 
   var list = items.filter(function(x){ return x.status===curTab; });
   if(curTab==="予定"){
-    list.sort(function(a,b){ return (a.planned||"9999").localeCompare(b.planned||"9999"); });
+    list.sort(function(a,b){ return (fmtDate(a.planned)||"9999").localeCompare(fmtDate(b.planned)||"9999"); });
   } else if(curTab==="投稿済み"){
-    list.sort(function(a,b){ return (b.posted||"").localeCompare(a.posted||""); });
+    list.sort(function(a,b){ return (fmtDate(b.posted)||"").localeCompare(fmtDate(a.posted)||""); });
   } else {
-    list.sort(function(a,b){ return (b.created||"").localeCompare(a.created||""); });
+    list.sort(function(a,b){ return (fmtDate(b.created)||"").localeCompare(fmtDate(a.created)||""); });
   }
 
   if(list.length===0){
@@ -139,11 +139,11 @@ function render(){
 
   var today = todayStr();
   document.getElementById("list").innerHTML = list.map(function(x){
-    var overdue = (x.status==="予定" && x.planned && x.planned < today);
+    var overdue = (x.status==="予定" && fmtDate(x.planned) && fmtDate(x.planned) < today);
     var meta = "";
-    if(x.status==="ネタ") meta = "作成 "+x.created;
-    if(x.status==="予定") meta = "予定日 "+(x.planned||"未設定")+(overdue?'　<span class="ov">⚠ 予定日超過</span>':"");
-    if(x.status==="投稿済み") meta = "投稿 "+x.posted;
+    if(x.status==="ネタ") meta = "作成 "+fmtDate(x.created);
+    if(x.status==="予定") meta = "予定日 "+(fmtDate(x.planned)||"未設定")+(overdue?'　<span class="ov">⚠ 予定日超過</span>':"");
+    if(x.status==="投稿済み") meta = "投稿 "+fmtDate(x.posted);
 
     var btns = "";
     if(x.status==="ネタ"){
@@ -167,6 +167,16 @@ function render(){
 }
 
 function esc(s){ return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+// シート側で日付型に変換された値（"Sun Jul 19 2026..."等）を yyyy-mm-dd に整える
+function fmtDate(s){
+  s = String(s || "");
+  if(!s) return "";
+  if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,16);
+  var d = new Date(s);
+  if(isNaN(d.getTime())) return s;
+  return d.getFullYear()+"-"+("0"+(d.getMonth()+1)).slice(-2)+"-"+("0"+d.getDate()).slice(-2);
+}
 
 function addItem(){
   var title = document.getElementById("f-title").value.trim();
