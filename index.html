@@ -128,7 +128,7 @@ body{background:#07070f;min-height:100vh;font-family:'Hiragino Sans','Noto Sans 
 <!-- HHバナー -->
 <div class="hh-banner" id="hh-banner">
   <div class="hh-banner-text">半額！🎉 Happy Hour！<br>生ビール・角ハイボール・レモンサワー</div>
-  <div class="hh-banner-sub">〜18:00まで</div>
+  <div class="hh-banner-sub">16:00〜20:00</div>
 </div>
 
 <!-- 注文ビュー -->
@@ -240,7 +240,8 @@ var TABLE_NO = (new URLSearchParams(window.location.search)).get("table") || "";
 function isHappyHour(){
   var d = new Date();
   var jst = new Date(d.toLocaleString("en-US",{timeZone:"Asia/Tokyo"}));
-  return jst.getHours() < 18;
+  var h = jst.getHours();
+  return h >= 16 && h < 20;
 }
 var HH = isHappyHour();
 if(HH) document.getElementById("hh-banner").className="hh-banner show";
