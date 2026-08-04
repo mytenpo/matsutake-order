@@ -116,6 +116,63 @@ body{background:#07070f;min-height:100vh;font-family:'Hiragino Sans','Noto Sans 
     zoom:0.7225;
   }
 }
+
+/* ══════════════════════════════════════════════
+   v67: カテゴリタブを横スクロール廃止 → 3列グリッド
+   お客様が全カテゴリを一目で見つけられるように
+   ══════════════════════════════════════════════ */
+.sub-tabs{
+  display:grid !important;
+  grid-template-columns:repeat(3,1fr) !important;
+  gap:8px !important;
+  overflow-x:visible !important;
+  padding:12px !important;
+}
+.sub-tab{
+  flex-shrink:1 !important;
+  white-space:normal !important;
+  word-break:auto-phrase;
+  line-height:1.3 !important;
+  padding:12px 6px !important;
+  font-size:16px !important;
+  min-height:62px !important;
+  border-radius:12px !important;
+  display:flex; align-items:center; justify-content:center; text-align:center;
+}
+@media (max-width:380px){
+  .sub-tabs{ grid-template-columns:repeat(2,1fr) !important; }
+}
+
+
+/* ══════════════════════════════════════════════
+   v68: 大分類タブに番号／サブカテゴリ120%拡大
+   ══════════════════════════════════════════════ */
+.cat-tab{
+  font-size:27px !important;      /* 23 → 27 */
+  font-weight:800 !important;
+  padding:16px 10px !important;
+  color:#666 !important;
+  display:flex; align-items:center; justify-content:center; gap:8px;
+}
+.cat-no{
+  display:inline-flex; align-items:center; justify-content:center;
+  width:34px; height:34px; border-radius:50%;
+  background:rgba(255,255,255,.12); color:#999;
+  font-size:20px; font-weight:900; flex:0 0 auto;
+}
+.cat-tab.active .cat-no{ background:#ff2d78; color:#fff; }
+
+/* サブカテゴリ（ビール・サワー・￥380スピード等）を約120%に */
+.sub-tab{
+  font-size:19px !important;      /* 16 → 19 */
+  font-weight:700 !important;
+  min-height:70px !important;
+  padding:13px 6px !important;
+}
+@media (max-width:380px){
+  .sub-tab{ font-size:17px !important; }
+}
+
 </style>
 </head>
 <body>
@@ -134,8 +191,8 @@ body{background:#07070f;min-height:100vh;font-family:'Hiragino Sans','Noto Sans 
 <!-- 注文ビュー -->
 <div id="view-order">
   <div class="cat-tabs">
-    <div class="cat-tab active" id="tab-drink" onclick="showCat('drink')">🍺 ドリンク</div>
-    <div class="cat-tab" id="tab-food" onclick="showCat('food')">🍴 フード</div>
+    <div class="cat-tab active" id="tab-drink" onclick="showCat('drink')"><span class="cat-no">①</span>🍺 ドリンク</div>
+    <div class="cat-tab" id="tab-food" onclick="showCat('food')"><span class="cat-no">②</span>🍴 フード</div>
   </div>
   <div id="menu-drink"></div>
   <div id="menu-food" style="display:none"></div>
